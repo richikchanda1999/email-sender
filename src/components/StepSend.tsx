@@ -385,7 +385,26 @@ export function StepSend({
     <StepShell title="Review & send" sub="Each row waits for your nod before it goes out." density={density} wide>
       <div
         style={{
-          marginTop: 22,
+          marginTop: 16,
+          padding: "12px 16px",
+          background: "var(--panel)",
+          border: "1px solid var(--line)",
+          borderRadius: 10,
+          fontSize: 12.5,
+          color: "var(--ink-dim)",
+          lineHeight: 1.65,
+        }}
+      >
+        <div style={{ color: "var(--ink)", fontWeight: 500, marginBottom: 4 }}>Before you start</div>
+        Nothing gets sent until you click <strong>Confirm &amp; send</strong> on each row. Click{" "}
+        <strong>Check for duplicates</strong> to scan the last 90 days (this app's local log plus your
+        Gmail Sent folder) for an identical body + attachments — a safety net against re-sending the same
+        email. The <em>hold rows with missing attachments for last</em> toggle processes complete rows
+        first and circles back to any missing-attachment rows at the end, so you can drop files in mid-run.
+      </div>
+      <div
+        style={{
+          marginTop: 18,
           display: "grid",
           gridTemplateColumns: "repeat(6, 1fr)",
           gap: 0,

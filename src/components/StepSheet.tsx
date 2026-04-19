@@ -44,7 +44,26 @@ export function StepSheet({
       <StepShell title="Choose a spreadsheet" sub="Point at an .xlsx or .csv to start your campaign." density={density}>
         <div
           style={{
-            marginTop: 24,
+            marginTop: 16,
+            padding: "14px 18px",
+            background: "var(--panel)",
+            border: "1px solid var(--line)",
+            borderRadius: 10,
+            fontSize: 12.5,
+            color: "var(--ink-dim)",
+            lineHeight: 1.65,
+          }}
+        >
+          <div style={{ color: "var(--ink)", fontWeight: 500, marginBottom: 4 }}>How Letterpress works</div>
+          Letterpress reads your spreadsheet, uses each row to render an email, and sends them one at a
+          time through your Gmail account. The <strong>first row</strong> of the sheet becomes column
+          names — those names become placeholders like <code style={{ fontFamily: "JetBrains Mono, monospace", color: "var(--terracotta)" }}>{"{{ColumnName}}"}</code>{" "}
+          that you can drop into the subject, body, and attachment filename rules. Nothing is sent until
+          you confirm each row in the last step.
+        </div>
+        <div
+          style={{
+            marginTop: 20,
             border: "1.5px dashed var(--line-strong)",
             borderRadius: 14,
             padding: cozy ? "56px 40px" : "44px 32px",

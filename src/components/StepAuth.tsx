@@ -134,8 +134,10 @@ export function StepAuth({
         <div style={{ fontFamily: "Fraunces, serif", fontSize: 22, color: "var(--ink)" }}>
           {authState === "connecting" ? "Waiting for the browser…" : "Sign in with Google"}
         </div>
-        <div style={{ fontSize: 13, color: "var(--ink-dim)", maxWidth: 420, lineHeight: 1.7 }}>
-          A secure window will open in your browser. Letterpress only asks for <em>gmail.send</em> plus basic profile — never reads your inbox, never stores your password.
+        <div style={{ fontSize: 13, color: "var(--ink-dim)", maxWidth: 480, lineHeight: 1.7 }}>
+          A secure window will open in your browser. Letterpress asks for <em>gmail.send</em> (required to send mail on your behalf),
+          <em> gmail.readonly</em> (only used by the duplicate-check button on the Send step to scan your Sent folder), and basic
+          profile — never your password, and nothing is written to your inbox.
         </div>
         <button
           onClick={connect}

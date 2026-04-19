@@ -122,6 +122,30 @@ export function StepAttachments({
 
   return (
     <StepShell title="Attach the right files" sub="One set follows each row; another set ships with every email." density={density} wide>
+      <div
+        style={{
+          marginTop: 16,
+          padding: "12px 16px",
+          background: "var(--panel)",
+          border: "1px solid var(--line)",
+          borderRadius: 10,
+          fontSize: 12.5,
+          color: "var(--ink-dim)",
+          lineHeight: 1.65,
+        }}
+      >
+        <div style={{ color: "var(--ink)", fontWeight: 500, marginBottom: 6 }}>Two kinds of attachments</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div>
+            <strong>Per-row</strong> — one file per row, looked up in a folder by filename pattern.
+            Example: if your sheet has a column <code style={{ fontFamily: "JetBrains Mono, monospace", color: "var(--terracotta)" }}>InvoiceNumber</code>, the pattern{" "}
+            <code style={{ fontFamily: "JetBrains Mono, monospace", color: "var(--terracotta)" }}>{"{{InvoiceNumber}}.pdf"}</code> attaches <code style={{ fontFamily: "JetBrains Mono, monospace" }}>INV-0042.pdf</code> to the row with that invoice number.
+          </div>
+          <div>
+            <strong>Fixed</strong> — same file(s) attached to every email. Good for a terms-of-service PDF, a letterhead, or a bank-details sheet.
+          </div>
+        </div>
+      </div>
       <SectionCard title="Per-row attachment" num="A">
         <div style={{ fontSize: 13, color: "var(--ink-dim)", lineHeight: 1.6, marginBottom: 14 }}>
           For each row, find a file inside a folder whose name matches the pattern below. Placeholders are replaced with the row's values before matching.
@@ -167,7 +191,7 @@ export function StepAttachments({
               ref={patternInputRef}
               value={rules.pattern}
               onChange={(e) => setRules((r) => ({ ...r, pattern: e.target.value }))}
-              placeholder="Invoice-{{InvoiceNumber}}-{{ClientName}}.pdf"
+              placeholder="{{ColumnName}}.pdf"
               spellCheck={false}
               style={{
                 padding: "10px 14px",
