@@ -1,0 +1,47 @@
+[package]
+name = "letterpress"
+version = "0.1.0"
+description = "Letterpress — boho Excel email sender"
+authors = ["Lena Marchetti"]
+edition = "2021"
+
+[lib]
+name = "letterpress_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri               = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde               = { version = "1", features = ["derive"] }
+serde_json          = "1"
+thiserror           = "1"
+
+# spreadsheet
+calamine = { version = "0.26", features = ["dates"] }
+
+# oauth + http
+oauth2  = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+url     = "2"
+tokio   = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs"] }
+
+# keychain
+keyring = "3"
+
+# MIME building
+mail-builder = "0.4"
+
+# misc
+base64 = "0.22"
+rand   = "0.8"
+toml   = "0.8"
+csv    = "1"
+sha2   = "0.10"
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
