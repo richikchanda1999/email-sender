@@ -4,7 +4,7 @@ import { primaryBtn, ghostBtn } from "../primitives";
 import { openPath } from "@tauri-apps/plugin-opener";
 
 export function SetupScreen({ configPath, onRetry }: { configPath: string; onRetry: () => void }) {
-  const parentDir = configPath.replace(/\/letterpress\.toml$/, "");
+  const parentDir = configPath.replace(/[\\/]letterpress\.toml$/, "");
 
   const revealInFinder = async () => {
     try {

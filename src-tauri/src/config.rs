@@ -51,6 +51,9 @@ pub fn load_config(app: &AppHandle) -> Result<Config> {
 #[tauri::command]
 pub async fn config_status(app: AppHandle) -> Result<ConfigStatus> {
     let path = resolve_config_path(&app);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let present = path.exists() || PathBuf::from("letterpress.toml").exists();
     Ok(ConfigStatus {
         present,
