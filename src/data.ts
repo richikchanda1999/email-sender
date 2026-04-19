@@ -67,13 +67,33 @@ export const STEPS: StepDef[] = [
   { key: "send", label: "Review & send", hint: "Row-by-row" },
 ];
 
-export const DEFAULT_TEMPLATE = `<p>Dear {{ClientName}},</p>
-<p>Thank you for trusting the studio with {{ProjectTitle}}. Please find attached invoice {{InvoiceNumber}} for {{Amount}}, payable by {{DueDate}}.</p>
-<p>Bank details and our current terms are included for your records.</p>
-<p>If anything looks off, write back — I'll happily revise. Otherwise, it was a real pleasure working with {{CompanyName}} this season.</p>
-<p>Warmly,</p>`;
+export const DEFAULT_TEMPLATE = "<p></p>";
+export const DEFAULT_SUBJECT = "";
+export const DEFAULT_PATTERN = "";
 
-export const DEFAULT_SUBJECT = "Invoice {{InvoiceNumber}} · {{ProjectTitle}}";
+/**
+ * Generates sensible starting values for template/subject/pattern from the
+ * actual column headers of the loaded spreadsheet. Lets us avoid shipping
+ * Marchetti-Studio-flavored hardcoded tokens as defaults — the user's sheet
+ * will almost never have a `ClientName` or `InvoiceNumber` column.
+ */
+export function buildSmartDefaults(columns: string[]): {
+  template: string;
+  subject: string;
+  pattern: string;
+} {
+  const nameColumn =
+    columns.find((c) => /^(first\s*name|full\s*name|name|client|customer|contact|recipient)$/i.test(c)) ??
+    columns.find((c) => /name|client|customer|contact|recipient/i.test(c)) ??
+    columns.find((c) => !/email|phone|address|url|id$/i.test(c)) ??
+    columns[0] ??
+    "Name";
+  return {
+    template: `<p>Hi {{${nameColumn}}},</p><p></p><p></p><p>Best regards,</p>`,
+    subject: "",
+    pattern: `{{${nameColumn}}}.pdf`,
+  };
+}
 
 export function rowRecord(sheet: Sheet, idx: number): Record<string, string> {
   const rec: Record<string, string> = {};

@@ -12,6 +12,8 @@ import {
   ConfigStatus,
   DEFAULT_TEMPLATE,
   DEFAULT_SUBJECT,
+  DEFAULT_PATTERN,
+  buildSmartDefaults,
 } from "./data";
 import { CanvasTopBar } from "./primitives";
 import { WindowChrome } from "./components/WindowChrome";
@@ -32,7 +34,7 @@ export default function App() {
   const [subject, setSubject] = React.useState(DEFAULT_SUBJECT);
   const [cc, setCc] = React.useState<string[]>([]);
   const [rules, setRules] = React.useState<Rules>({
-    pattern: "Invoice-{{InvoiceNumber}}-{{ClientName}}.pdf",
+    pattern: DEFAULT_PATTERN,
     caseInsensitive: true,
     fuzzy: true,
     required: false,
@@ -46,7 +48,20 @@ export default function App() {
   const [emailColumn, setEmailColumn] = React.useState<string | null>(null);
   const [nameColumn, setNameColumn] = React.useState<string | null>(null);
 
-  // Auto-detect recipient columns when the sheet (or its columns) changes.
+  // Track the last smart-default values we seeded so we can detect whether the
+  // user has edited them. If the current state still equals the last seed, a
+  // new sheet's smart defaults will overwrite; otherwise we leave the user's
+  // edits alone.
+  const lastSeedRef = React.useRef<{
+    template: string;
+    subject: string;
+    pattern: string;
+  }>({
+    template: DEFAULT_TEMPLATE,
+    subject: DEFAULT_SUBJECT,
+    pattern: DEFAULT_PATTERN,
+  });
+
   React.useEffect(() => {
     if (!sheet) {
       setEmailColumn(null);
@@ -66,6 +81,17 @@ export default function App() {
       null;
     setEmailColumn(detectedEmail);
     setNameColumn(detectedName);
+
+    // Swap in column-aware smart defaults — but only for fields the user
+    // hasn't touched since the last seed.
+    const def = buildSmartDefaults(cols);
+    const seed = lastSeedRef.current;
+    if (template === seed.template) setTemplate(def.template);
+    if (subject === seed.subject) setSubject(def.subject);
+    if (rules.pattern === seed.pattern) {
+      setRules((r) => ({ ...r, pattern: def.pattern }));
+    }
+    lastSeedRef.current = def;
   }, [sheet]);
 
   const boot = React.useCallback(async () => {
@@ -100,10 +126,16 @@ export default function App() {
     setTemplate(DEFAULT_TEMPLATE);
     setSubject(DEFAULT_SUBJECT);
     setCc([]);
+    setRules((r) => ({ ...r, pattern: DEFAULT_PATTERN }));
     setAttachmentsFolder(null);
     setResolved([]);
     setFixed([]);
     setLogEntries([]);
+    lastSeedRef.current = {
+      template: DEFAULT_TEMPLATE,
+      subject: DEFAULT_SUBJECT,
+      pattern: DEFAULT_PATTERN,
+    };
   };
 
   const stepState: Record<StepKey, "done" | ""> = {
