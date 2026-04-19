@@ -3,6 +3,7 @@ import React from "react";
 export type RichEditorHandle = {
   insertToken: (key: string) => void;
   focus: () => void;
+  reset: (html: string) => void;
 };
 
 const FONT_FAMILIES = [
@@ -90,6 +91,12 @@ export const RichTextEditor = React.forwardRef<
   React.useImperativeHandle(ref, () => ({
     insertToken: (k: string) => insertHtml(`{{${k}}}`),
     focus,
+    reset: (html: string) => {
+      if (editorRef.current) {
+        editorRef.current.innerHTML = html;
+      }
+      onChange(html);
+    },
   }));
 
   const saveSelection = () => {

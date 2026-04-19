@@ -1,4 +1,5 @@
 import React from "react";
+import mammoth from "mammoth";
 import { Sheet, rowRecord, resolveTokens, resolveTokensHtml } from "../data";
 import { StepShell } from "../primitives";
 import { ArchDivider } from "./WindowChrome";
@@ -70,6 +71,51 @@ export function StepTemplate({
     }
   };
 
+  const docxInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [docxError, setDocxError] = React.useState<string | null>(null);
+  const [docxNote, setDocxNote] = React.useState<string | null>(null);
+  const [docxBusy, setDocxBusy] = React.useState(false);
+
+  const pickDocx = () => {
+    setDocxError(null);
+    setDocxNote(null);
+    docxInputRef.current?.click();
+  };
+
+  const onDocxChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // reset so re-picking the same file refires onChange
+    if (!file) return;
+    setDocxBusy(true);
+    setDocxError(null);
+    setDocxNote(null);
+    try {
+      const buffer = await file.arrayBuffer();
+      const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+      const html = result.value || "<p></p>";
+      setTemplate(html);
+      editorRef.current?.reset(html);
+      if (result.messages?.length) {
+        const warnings = result.messages.filter((m) => m.type === "warning").length;
+        if (warnings > 0) {
+          setDocxNote(
+            `Imported. ${warnings} formatting warning${warnings === 1 ? "" : "s"} — complex layouts may not survive the conversion.`
+          );
+        } else {
+          setDocxNote("Imported.");
+        }
+      } else {
+        setDocxNote("Imported.");
+      }
+    } catch (err: any) {
+      setDocxError(
+        typeof err === "string" ? err : err?.message ?? "failed to read the .docx file"
+      );
+    } finally {
+      setDocxBusy(false);
+    }
+  };
+
   if (!sheet) {
     return (
       <StepShell title="Compose the letter" sub="Load a spreadsheet first to see your column tokens." density={density} wide>
@@ -82,9 +128,35 @@ export function StepTemplate({
 
   return (
     <StepShell title="Compose the letter" sub="Drag a column into the body, or click to insert at the cursor." density={density} wide>
+      <input
+        ref={docxInputRef}
+        type="file"
+        accept=".docx"
+        style={{ display: "none" }}
+        onChange={onDocxChosen}
+      />
       <div
         style={{
-          marginTop: 22,
+          marginTop: 16,
+          padding: "12px 16px",
+          background: "var(--panel)",
+          border: "1px solid var(--line)",
+          borderRadius: 10,
+          fontSize: 12.5,
+          color: "var(--ink-dim)",
+          lineHeight: 1.6,
+        }}
+      >
+        Write your message once. Wrap a column name in <code style={codeStyle()}>{"{{ }}"}</code> to pull per-row values —
+        e.g. <code style={codeStyle()}>Hi {"{{"}{columns[0] ?? "Name"}{"}}"},</code> becomes{" "}
+        <code style={codeStyle()}>Hi {previewRow ? previewRow[columns[0] ?? ""] ?? "Alice" : "Alice"},</code> on that row.
+        Drag a column from the left, click a chip to insert at the cursor, or type{" "}
+        <code style={codeStyle()}>{"{{"}</code> yourself. To bring in a formatted letter from Word (including
+        signature images), use <strong>Import .docx</strong> above the editor.
+      </div>
+      <div
+        style={{
+          marginTop: 18,
           display: "grid",
           gridTemplateColumns: "220px 1fr",
           gap: 22,
@@ -191,11 +263,12 @@ export function StepTemplate({
             }}
           >
             {[
-              { key: "compose", label: "Compose" },
-              { key: "preview", label: "Preview" },
+              { key: "compose", label: "Compose", title: "Write the template with {{column}} tokens." },
+              { key: "preview", label: "Preview", title: "See how one row will look with tokens filled in. Pick the row on the left." },
             ].map((t) => (
               <button
                 key={t.key}
+                title={t.title}
                 onClick={() => setTab(t.key as "compose" | "preview")}
                 style={{
                   all: "unset",
@@ -294,6 +367,50 @@ export function StepTemplate({
               </div>
 
               <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "8px 14px",
+                  borderBottom: "1px solid var(--line)",
+                  background: "var(--panel-soft)",
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  onClick={pickDocx}
+                  disabled={docxBusy}
+                  title="Import a .docx file (including inline images and signatures) as the email body"
+                  style={{
+                    all: "unset",
+                    cursor: docxBusy ? "wait" : "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "5px 11px",
+                    borderRadius: 999,
+                    border: "1px solid var(--line-strong)",
+                    background: "var(--bg)",
+                    color: "var(--ink)",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    opacity: docxBusy ? 0.6 : 1,
+                  }}
+                >
+                  {docxBusy ? "Importing…" : "Import .docx"}
+                </button>
+                <span style={{ fontSize: 11, color: "var(--ink-soft)", fontStyle: "italic" }}>
+                  Replaces the current body with your Word file's content.
+                </span>
+                <span style={{ flex: 1 }} />
+                {docxNote && (
+                  <span style={{ fontSize: 11.5, color: "var(--sage-dark)" }}>{docxNote}</span>
+                )}
+                {docxError && (
+                  <span style={{ fontSize: 11.5, color: "var(--terracotta)" }}>{docxError}</span>
+                )}
+              </div>
+              <div
                 style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
                 onFocusCapture={() => setLastFocused("body")}
               >
@@ -310,7 +427,8 @@ export function StepTemplate({
             <div style={{ padding: "22px 28px", flex: 1, overflow: "auto" }}>
               <div style={{ fontSize: 11, color: "var(--ink-soft)", textTransform: "uppercase", letterSpacing: 1 }}>To</div>
               <div style={{ fontSize: 13.5, color: "var(--ink)", marginTop: 4 }}>
-                {previewRow && previewRow[columns[0] ?? ""]} &lt;{previewRow?.[columns.find((c) => /email/i.test(c)) ?? "Email"] ?? ""}&gt;
+                {nameColumn && previewRow ? previewRow[nameColumn] : ""}{nameColumn ? " " : ""}
+                &lt;{emailColumn && previewRow ? previewRow[emailColumn] : ""}&gt;
               </div>
               {cc.length > 0 && (
                 <>
@@ -419,6 +537,18 @@ function ColumnSelect({
       ))}
     </select>
   );
+}
+
+function codeStyle(): React.CSSProperties {
+  return {
+    fontFamily: "JetBrains Mono, monospace",
+    fontSize: "0.9em",
+    background: "var(--bg)",
+    border: "1px solid var(--line)",
+    padding: "1px 5px",
+    borderRadius: 4,
+    color: "var(--terracotta)",
+  };
 }
 
 function miniBtn(): React.CSSProperties {
