@@ -6,6 +6,7 @@ mod gmail;
 mod hash;
 mod history;
 mod oauth;
+mod sessions;
 mod state;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,6 +34,15 @@ pub fn run() {
             commands::send::send_one,
             commands::dedupe::check_duplicates,
             commands::log::export_log,
+            sessions::list_sessions,
+            sessions::list_trash,
+            sessions::load_session,
+            sessions::save_session,
+            sessions::create_session,
+            sessions::rename_session,
+            sessions::delete_session,
+            sessions::restore_session,
+            sessions::purge_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
