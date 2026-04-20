@@ -401,9 +401,10 @@ function Toolbar({
   onFontSize: (v: string) => void;
   systemFonts: FontOption[] | null;
 }) {
-  // Use onMouseDown + preventDefault so the editor keeps selection focus when clicking toolbar buttons.
-  const keepFocus = (e: React.MouseEvent) => e.preventDefault();
-
+  // Per-button onMouseDown={preventDefault} (on IconBtn / ColorPopButton) already
+  // keeps the editor focused when clicking toolbar icons. Applying a container-
+  // level preventDefault here would also cancel native <select> dropdown opening,
+  // which is what happened in v0.1.6 — removed.
   const [colorOpen, setColorOpen] = React.useState(false);
   const [hiOpen, setHiOpen] = React.useState(false);
 
@@ -419,7 +420,6 @@ function Toolbar({
         background: "var(--panel-soft)",
         position: "relative",
       }}
-      onMouseDown={keepFocus}
     >
       <GroupedToolbarSelect
         title="Font family"
