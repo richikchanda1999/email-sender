@@ -8,6 +8,8 @@ import {
   GoogleUser,
   ResolvedAttachment,
   LogEntry,
+  DuplicateHit,
+  RowStatus,
 } from "../data";
 import { StepSheet } from "./StepSheet";
 import { StepTemplate } from "./StepTemplate";
@@ -30,6 +32,11 @@ export type AppState = {
   logEntries: LogEntry[];
   emailColumn: string | null;
   nameColumn: string | null;
+  sendStatus: RowStatus[];
+  sendErrors: Record<number, string>;
+  sendDupHits: Record<number, DuplicateHit[]> | null;
+  sendDupErrors: string[];
+  deferMissing: boolean;
 };
 
 export type AppSetters = {
@@ -47,6 +54,11 @@ export type AppSetters = {
   setLogEntries: React.Dispatch<React.SetStateAction<LogEntry[]>>;
   setEmailColumn: React.Dispatch<React.SetStateAction<string | null>>;
   setNameColumn: React.Dispatch<React.SetStateAction<string | null>>;
+  setSendStatus: React.Dispatch<React.SetStateAction<RowStatus[]>>;
+  setSendErrors: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  setSendDupHits: React.Dispatch<React.SetStateAction<Record<number, DuplicateHit[]> | null>>;
+  setSendDupErrors: React.Dispatch<React.SetStateAction<string[]>>;
+  setDeferMissing: React.Dispatch<React.SetStateAction<boolean>>;
   resetAll: () => void;
 };
 
@@ -114,6 +126,16 @@ export function StepRouter({ state, setters, density }: { state: AppState; sette
         nameColumn={state.nameColumn}
         logEntries={state.logEntries}
         setLogEntries={setters.setLogEntries}
+        status={state.sendStatus}
+        setStatus={setters.setSendStatus}
+        errors={state.sendErrors}
+        setErrors={setters.setSendErrors}
+        dupHits={state.sendDupHits}
+        setDupHits={setters.setSendDupHits}
+        dupErrors={state.sendDupErrors}
+        setDupErrors={setters.setSendDupErrors}
+        deferMissing={state.deferMissing}
+        setDeferMissing={setters.setDeferMissing}
         onRestart={setters.resetAll}
         density={density}
       />

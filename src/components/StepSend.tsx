@@ -59,6 +59,16 @@ export function StepSend({
   nameColumn: nameColumnProp,
   logEntries,
   setLogEntries,
+  status,
+  setStatus,
+  errors,
+  setErrors,
+  dupHits,
+  setDupHits,
+  dupErrors,
+  setDupErrors,
+  deferMissing,
+  setDeferMissing,
   onRestart,
   density,
 }: {
@@ -76,6 +86,16 @@ export function StepSend({
   nameColumn: string | null;
   logEntries: LogEntry[];
   setLogEntries: React.Dispatch<React.SetStateAction<LogEntry[]>>;
+  status: RowStatus[];
+  setStatus: React.Dispatch<React.SetStateAction<RowStatus[]>>;
+  errors: Record<number, string>;
+  setErrors: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  dupHits: Record<number, DuplicateHit[]> | null;
+  setDupHits: React.Dispatch<React.SetStateAction<Record<number, DuplicateHit[]> | null>>;
+  dupErrors: string[];
+  setDupErrors: React.Dispatch<React.SetStateAction<string[]>>;
+  deferMissing: boolean;
+  setDeferMissing: React.Dispatch<React.SetStateAction<boolean>>;
   onRestart: () => void;
   density: "cozy" | "compact";
 }) {
@@ -115,17 +135,16 @@ export function StepSend({
     [rowMetas, firstIdxByEmail, emailColumn]
   );
 
-  const [status, setStatus] = React.useState<RowStatus[]>([]);
-  const [errors, setErrors] = React.useState<Record<number, string>>({});
   const [currentIdx, setCurrentIdx] = React.useState<number | null>(null);
   const [sending, setSending] = React.useState(false);
   const [paused, setPaused] = React.useState(false);
   const [authExpired, setAuthExpired] = React.useState(false);
   const [reauthing, setReauthing] = React.useState(false);
-  const [deferMissing, setDeferMissing] = React.useState(true);
-  const [dupHits, setDupHits] = React.useState<Record<number, DuplicateHit[]> | null>(null);
-  const [dupErrors, setDupErrors] = React.useState<string[]>([]);
   const [dupChecking, setDupChecking] = React.useState(false);
+  const [statusFilter, setStatusFilter] = React.useState<"all" | RowStatus>("all");
+  const [searchText, setSearchText] = React.useState("");
+  const [perRowDupe, setPerRowDupe] = React.useState<DuplicateHit[] | null>(null);
+  const [perRowDupeChecking, setPerRowDupeChecking] = React.useState(false);
 
   const attachmentsConfigured = resolved.length > 0;
   const hasAttachment = React.useCallback(
@@ -153,15 +172,17 @@ export function StepSend({
     }
   };
 
-  // Initialize / re-initialize status whenever the row set changes.
-  // All rows start as "pending" — the informational "same address" tag below does not
-  // block sending. Real duplicate detection (body + attachments) is handled by the
-  // explicit "Check for duplicates" button.
+  // Initialize status array only when its length diverges from rowMetas — e.g. on
+  // the first render, or after App cleared it via the sheet-change effect. Do NOT
+  // reset on every remount (tab navigation) — the lifted state already survives
+  // unmount, and re-resetting would wipe a campaign-in-progress.
   React.useEffect(() => {
-    setStatus(rowMetas.map(() => "pending"));
-    setCurrentIdx(null);
-    setErrors({});
-  }, [rowMetas]);
+    if (status.length !== rowMetas.length) {
+      setStatus(rowMetas.map(() => "pending"));
+      setErrors({});
+      setCurrentIdx(null);
+    }
+  }, [rowMetas.length, status.length, setStatus, setErrors]);
 
   const resolve = (t: string, row: Record<string, string>) => resolveTokens(t, row);
   const findNextPending = React.useCallback(
@@ -183,6 +204,26 @@ export function StepSend({
     [status, attachmentsConfigured, hasAttachment]
   );
 
+  const filteredRows = React.useMemo(() => {
+    const q = searchText.trim().toLowerCase();
+    return rowMetas
+      .map((r, i) => ({ r, i }))
+      .filter(({ r, i }) => {
+        const st = status[i] ?? "pending";
+        if (statusFilter !== "all" && st !== statusFilter) return false;
+        if (!q) return true;
+        const rec = r.record;
+        const hay = [
+          rec[nameColumn] ?? "",
+          rec[emailColumn] ?? "",
+          resolveTokens(subject, rec),
+        ]
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(q);
+      });
+  }, [rowMetas, status, statusFilter, searchText, nameColumn, emailColumn, subject]);
+
   const startRun = () => {
     setPaused(false);
     const firstIdx = findNextPending(status);
@@ -196,6 +237,49 @@ export function StepSend({
     fixed.forEach((f) => paths.push(f.path));
     return paths;
   };
+
+  // Per-row pre-send dupe check. Fires whenever the confirm modal opens on a new
+  // row. Local-only (skipGmail: true) so modal open stays snappy; the "Check for
+  // duplicates" button is the authoritative Gmail-inclusive check.
+  React.useEffect(() => {
+    if (currentIdx === null || !sheet) {
+      setPerRowDupe(null);
+      return;
+    }
+    const i = currentIdx;
+    const meta = rowMetas[i];
+    if (!meta) return;
+    const rec = meta.record;
+    const toEmail = rec[emailColumn] ?? "";
+    if (!toEmail.trim()) {
+      setPerRowDupe(null);
+      return;
+    }
+    const bodyHtml = resolveTokensHtml(template, rec);
+    const attachments = buildAttachments(i);
+
+    let cancelled = false;
+    setPerRowDupeChecking(true);
+    (async () => {
+      try {
+        const result = await ipc.checkDuplicates({
+          rows: [{ rowIndex: i, recipient: toEmail, bodyHtml, attachments }],
+          lookbackDays: 90,
+          skipGmail: true,
+        });
+        if (cancelled) return;
+        setPerRowDupe(result.hits.length > 0 ? result.hits : null);
+      } catch (e) {
+        if (!cancelled) setPerRowDupe(null);
+        console.warn("per-row dupe check:", e);
+      } finally {
+        if (!cancelled) setPerRowDupeChecking(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentIdx, sheet, template, emailColumn, rowMetas, resolved, fixed]);
 
   const appendLog = (entry: LogEntry) => {
     setLogEntries((l) => [...l, entry]);
@@ -486,15 +570,78 @@ export function StepSend({
         />
       </div>
 
+      {/* Filter + search controls for large campaigns. */}
       <div
         style={{
-          marginTop: 22,
+          marginTop: 18,
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {(
+            [
+              ["all", "All", total],
+              ["pending", "Pending", pendingCount],
+              ["sent", "Sent", sentCount],
+              ["failed", "Failed", failedCount],
+              ["skipped", "Skipped", skippedCount],
+              ["blocked", "Blocked", blockedCount],
+            ] as const
+          ).map(([key, label, count]) => (
+            <button
+              key={key}
+              onClick={() => setStatusFilter(key as typeof statusFilter)}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                padding: "5px 11px",
+                borderRadius: 999,
+                fontSize: 11.5,
+                fontWeight: 500,
+                border: "1px solid " + (statusFilter === key ? "var(--terracotta)" : "var(--line-strong)"),
+                color: statusFilter === key ? "var(--terracotta)" : "var(--ink-dim)",
+                background: statusFilter === key ? "rgba(169,132,103,0.10)" : "var(--bg)",
+              }}
+            >
+              {label}
+              <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 10.5 }}>{count}</span>
+            </button>
+          ))}
+        </div>
+        <span style={{ flex: 1 }} />
+        <input
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          placeholder="Filter by recipient or subject…"
+          style={{
+            minWidth: 240,
+            padding: "6px 12px",
+            border: "1px solid var(--line-strong)",
+            borderRadius: 999,
+            background: "var(--bg)",
+            fontSize: 12.5,
+            color: "var(--ink)",
+            outline: "none",
+          }}
+        />
+      </div>
+
+      <div
+        style={{
+          marginTop: 10,
           border: "1px solid var(--line)",
           borderRadius: 12,
           overflow: "hidden",
           background: "var(--bg)",
+          maxHeight: 520,
+          display: "flex",
+          flexDirection: "column",
         }}
       >
+        <div style={{ overflowY: "auto", overflowX: "hidden" }}>
         <div
           style={{
             display: "grid",
@@ -506,6 +653,9 @@ export function StepSend({
             letterSpacing: 1,
             color: "var(--ink-dim)",
             borderBottom: "1px solid var(--line)",
+            position: "sticky",
+            top: 0,
+            zIndex: 1,
           }}
         >
           <div></div>
@@ -514,7 +664,12 @@ export function StepSend({
           <div>Attachments</div>
           <div>Status</div>
         </div>
-        {rowMetas.map((r, i) => {
+        {filteredRows.length === 0 && (
+          <div style={{ padding: "40px 20px", textAlign: "center", fontSize: 12.5, color: "var(--ink-soft)" }}>
+            No rows match the current filter.
+          </div>
+        )}
+        {filteredRows.map(({ r, i }) => {
           const st = status[i] ?? "pending";
           const isCurrent = i === currentIdx;
           const dup = sameAddressInfo(i);
@@ -642,6 +797,7 @@ export function StepSend({
             </div>
           );
         })}
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 10, marginTop: 22, alignItems: "center", flexWrap: "wrap" }}>
@@ -821,6 +977,8 @@ export function StepSend({
           perRowResolvedName={resolved[currentIdx]?.resolvedName ?? null}
           user={user}
           sending={sending}
+          dupeHits={perRowDupe}
+          dupeChecking={perRowDupeChecking}
           onConfirm={confirmSend}
           onSkip={skipOne}
           onPause={() => {
@@ -876,6 +1034,8 @@ function ConfirmModal({
   perRowResolvedName,
   user,
   sending,
+  dupeHits,
+  dupeChecking,
   onConfirm,
   onSkip,
   onPause,
@@ -894,6 +1054,8 @@ function ConfirmModal({
   perRowResolvedName: string | null;
   user: GoogleUser | null;
   sending: boolean;
+  dupeHits: DuplicateHit[] | null;
+  dupeChecking: boolean;
   onConfirm: () => void;
   onSkip: () => void;
   onPause: () => void;
@@ -1027,6 +1189,41 @@ function ConfirmModal({
               ))}
             </div>
           </div>
+
+          {dupeHits && dupeHits.length > 0 && (
+            <div
+              style={{
+                marginTop: 16,
+                padding: "12px 14px",
+                background: "rgba(196,98,63,0.08)",
+                border: "1px solid rgba(196,98,63,0.4)",
+                borderRadius: 10,
+              }}
+            >
+              <div style={{ fontSize: 12, color: "var(--terracotta)", fontWeight: 600, marginBottom: 4 }}>
+                ⚠ Already sent
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--ink)", lineHeight: 1.55 }}>
+                An email with the same body and attachments was already sent to this recipient.
+                {dupeHits.slice(0, 3).map((h, i) => (
+                  <div key={i} style={{ marginTop: 4, fontSize: 11.5, color: "var(--ink-dim)" }}>
+                    • {h.priorSentAt.slice(0, 10)} — {h.priorSubject || "(no subject)"}
+                    <span style={{ marginLeft: 6, color: "var(--ink-soft)" }}>[{h.source}]</span>
+                  </div>
+                ))}
+                {dupeHits.length > 3 && (
+                  <div style={{ marginTop: 4, fontSize: 11.5, color: "var(--ink-soft)" }}>
+                    …and {dupeHits.length - 3} more
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {dupeChecking && !dupeHits && (
+            <div style={{ marginTop: 12, fontSize: 11, color: "var(--ink-soft)", fontStyle: "italic" }}>
+              Checking history for duplicates…
+            </div>
+          )}
         </div>
 
         <div
@@ -1048,15 +1245,23 @@ function ConfirmModal({
           </button>
           <button
             onClick={onConfirm}
-            disabled={sending}
+            disabled={sending || dupeChecking}
             style={{
               ...primaryBtn(),
-              opacity: sending ? 0.7 : 1,
+              opacity: sending || dupeChecking ? 0.7 : 1,
+              background:
+                dupeHits && dupeHits.length > 0 && !sending
+                  ? "var(--terracotta)"
+                  : "var(--terracotta)",
             }}
           >
             {sending ? (
               <>
                 <Spinner /> Sending…
+              </>
+            ) : dupeHits && dupeHits.length > 0 ? (
+              <>
+                <IconSend size={13} /> Send anyway
               </>
             ) : (
               <>

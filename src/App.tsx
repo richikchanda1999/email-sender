@@ -10,6 +10,8 @@ import {
   ResolvedAttachment,
   LogEntry,
   ConfigStatus,
+  DuplicateHit,
+  RowStatus,
   DEFAULT_TEMPLATE,
   DEFAULT_SUBJECT,
   DEFAULT_PATTERN,
@@ -52,6 +54,14 @@ export default function App() {
   const [emailColumn, setEmailColumn] = React.useState<string | null>(null);
   const [nameColumn, setNameColumn] = React.useState<string | null>(null);
 
+  // Send-step state — lifted here so navigating away from Send doesn't reset
+  // a campaign-in-progress.
+  const [sendStatus, setSendStatus] = React.useState<RowStatus[]>([]);
+  const [sendErrors, setSendErrors] = React.useState<Record<number, string>>({});
+  const [sendDupHits, setSendDupHits] = React.useState<Record<number, DuplicateHit[]> | null>(null);
+  const [sendDupErrors, setSendDupErrors] = React.useState<string[]>([]);
+  const [deferMissing, setDeferMissing] = React.useState(true);
+
   // Track the last smart-default values we seeded so we can detect whether the
   // user has edited them. If the current state still equals the last seed, a
   // new sheet's smart defaults will overwrite; otherwise we leave the user's
@@ -67,6 +77,12 @@ export default function App() {
   });
 
   React.useEffect(() => {
+    // Reset every send-step artifact whenever the campaign's source sheet changes.
+    // Not triggered by emailColumn/nameColumn tweaks — those don't invalidate prior sends.
+    setSendStatus([]);
+    setSendErrors({});
+    setSendDupHits(null);
+    setSendDupErrors([]);
     if (!sheet) {
       setEmailColumn(null);
       setNameColumn(null);
@@ -195,6 +211,10 @@ export default function App() {
     setResolved([]);
     setFixed([]);
     setLogEntries([]);
+    setSendStatus([]);
+    setSendErrors({});
+    setSendDupHits(null);
+    setSendDupErrors([]);
     lastSeedRef.current = {
       template: DEFAULT_TEMPLATE,
       subject: DEFAULT_SUBJECT,
@@ -237,6 +257,11 @@ export default function App() {
     logEntries,
     emailColumn,
     nameColumn,
+    sendStatus,
+    sendErrors,
+    sendDupHits,
+    sendDupErrors,
+    deferMissing,
   };
   const setters: AppSetters = {
     setStep,
@@ -253,6 +278,11 @@ export default function App() {
     setLogEntries,
     setEmailColumn,
     setNameColumn,
+    setSendStatus,
+    setSendErrors,
+    setSendDupHits,
+    setSendDupErrors,
+    setDeferMissing,
     resetAll,
   };
 
