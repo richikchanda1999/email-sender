@@ -1,6 +1,6 @@
 import React from "react";
 import mammoth from "mammoth";
-import { Sheet, rowRecord, resolveTokens, resolveTokensHtml } from "../data";
+import { Sheet, rowRecord, resolveTokens, resolveTokensHtml, BUILT_IN_TOKENS } from "../data";
 import { StepShell } from "../primitives";
 import { ArchDivider } from "./WindowChrome";
 import { IconGrip } from "../icons";
@@ -163,6 +163,41 @@ export function StepTemplate({
         }}
       >
         <div>
+          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1, color: "var(--ink-dim)", marginBottom: 10 }}>Built-in</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+            {BUILT_IN_TOKENS.map((t) => (
+              <div
+                key={t.key}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData("text/plain", `{{${t.key}}}`);
+                }}
+                onClick={() => insertToken(t.key)}
+                title={t.label}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  background: "rgba(127,145,114,0.10)",
+                  border: "1px solid rgba(127,145,114,0.35)",
+                  cursor: "grab",
+                  userSelect: "none",
+                }}
+              >
+                <IconGrip size={12} stroke="var(--sage-dark)" />
+                <div style={{ display: "flex", flexDirection: "column", gap: 1, overflow: "hidden" }}>
+                  <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11.5, color: "var(--sage-dark)" }}>
+                    {`{{${t.key}}}`}
+                  </span>
+                  <span style={{ fontSize: 10.5, color: "var(--ink-soft)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {t.preview()}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
           <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1, color: "var(--ink-dim)", marginBottom: 10 }}>Columns</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {columns.map((c) => (

@@ -104,10 +104,6 @@ export function rowRecord(sheet: Sheet, idx: number): Record<string, string> {
   return rec;
 }
 
-export function resolveTokens(text: string, row: Record<string, string>): string {
-  return text.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => (row[k] !== undefined ? row[k] : m));
-}
-
 export function htmlEscape(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -117,6 +113,56 @@ export function htmlEscape(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/** "20th April, 2026" style — day with English ordinal, full month, year. */
+export function formatOrdinalDate(d: Date = new Date()): string {
+  const day = d.getDate();
+  const suffixes = ["th", "st", "nd", "rd"];
+  const v = day % 100;
+  const suffix = suffixes[(v - 20) % 10] ?? suffixes[v] ?? suffixes[0];
+  const months = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  return `${day}${suffix} ${months[d.getMonth()]}, ${d.getFullYear()}`;
+}
+
+/**
+ * Built-in tokens — resolved dynamically at substitution time, independent
+ * of the loaded sheet. Column values from the spreadsheet take precedence
+ * over built-ins (so a column literally named "Today" still wins), but in
+ * practice built-ins only kick in when no matching column exists.
+ */
+export type BuiltInToken = {
+  key: string;
+  label: string;
+  preview: () => string;
+};
+
+export const BUILT_IN_TOKENS: BuiltInToken[] = [
+  {
+    key: "Today",
+    label: `Today's date (e.g. ${formatOrdinalDate()})`,
+    preview: () => formatOrdinalDate(),
+  },
+];
+
+function builtInValue(key: string): string | undefined {
+  if (key === "Today") return formatOrdinalDate();
+  return undefined;
+}
+
+export function resolveTokens(text: string, row: Record<string, string>): string {
+  return text.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => {
+    if (row[k] !== undefined) return row[k];
+    const b = builtInValue(k);
+    return b !== undefined ? b : m;
+  });
+}
+
 export function resolveTokensHtml(html: string, row: Record<string, string>): string {
-  return html.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => (row[k] !== undefined ? htmlEscape(row[k]) : m));
+  return html.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => {
+    if (row[k] !== undefined) return htmlEscape(row[k]);
+    const b = builtInValue(k);
+    return b !== undefined ? htmlEscape(b) : m;
+  });
 }
