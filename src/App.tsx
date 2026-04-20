@@ -23,16 +23,18 @@ import { Sidebar } from "./components/Sidebar";
 import { StepRouter, AppState, AppSetters } from "./components/VariationB";
 import { SetupScreen } from "./components/SetupScreen";
 import { ipc } from "./ipc";
-import { checkForUpdate, PendingUpdate } from "./updater";
+import { checkForUpdate, getCurrentVersion, UpdateCheckResult } from "./updater";
 
 const DENSITY = "cozy" as const;
 
 export default function App() {
   const [config, setConfig] = React.useState<ConfigStatus | null>(null);
   const [bootDone, setBootDone] = React.useState(false);
-  const [pendingUpdate, setPendingUpdate] = React.useState<PendingUpdate | null>(null);
+  const [updateState, setUpdateState] = React.useState<UpdateCheckResult | null>(null);
+  const [installedVersion, setInstalledVersion] = React.useState<string>("");
   const [updateInstalling, setUpdateInstalling] = React.useState(false);
-  const [updateError, setUpdateError] = React.useState<string | null>(null);
+  const [updateInstallError, setUpdateInstallError] = React.useState<string | null>(null);
+  const [updateChecking, setUpdateChecking] = React.useState(false);
 
   const [step, setStep] = React.useState<StepKey>("sheet");
   const [sheet, setSheet] = React.useState<Sheet | null>(null);
@@ -140,65 +142,134 @@ export default function App() {
     void boot();
   }, [boot]);
 
-  // Silent boot-time check for a newer release. Safe to no-op on failure; an
-  // offline launch or a misconfigured updater shouldn't block the app.
+  // Boot-time check for a newer release. Also read the installed version.
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
+      const v = await getCurrentVersion();
+      if (!cancelled) setInstalledVersion(v);
       const u = await checkForUpdate();
-      if (!cancelled) setPendingUpdate(u);
+      if (!cancelled) setUpdateState(u);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const installUpdate = React.useCallback(async () => {
-    if (!pendingUpdate) return;
-    setUpdateInstalling(true);
-    setUpdateError(null);
+  const recheck = React.useCallback(async () => {
+    setUpdateChecking(true);
+    setUpdateInstallError(null);
     try {
-      await pendingUpdate.install();
+      const u = await checkForUpdate();
+      setUpdateState(u);
+    } finally {
+      setUpdateChecking(false);
+    }
+  }, []);
+
+  const installUpdate = React.useCallback(async () => {
+    if (updateState?.kind !== "pending") return;
+    setUpdateInstalling(true);
+    setUpdateInstallError(null);
+    try {
+      await updateState.pending.install();
     } catch (e: any) {
-      setUpdateError(typeof e === "string" ? e : e?.message ?? "update failed");
+      setUpdateInstallError(typeof e === "string" ? e : e?.message ?? "install failed");
       setUpdateInstalling(false);
     }
-  }, [pendingUpdate]);
+  }, [updateState]);
 
-  const updatePill = pendingUpdate ? (
+  const pillBase: React.CSSProperties = {
+    all: "unset",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "4px 10px",
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: 500,
+    letterSpacing: 0.2,
+  };
+
+  // Version pill — always visible. Click to re-run the updater check.
+  const versionPill = (
     <button
-      onClick={() => void installUpdate()}
-      disabled={updateInstalling}
+      onClick={() => void recheck()}
+      disabled={updateChecking || updateInstalling}
       title={
-        updateError
-          ? `Update failed: ${updateError}`
-          : pendingUpdate.notes
-          ? `Release notes:\n\n${pendingUpdate.notes}`
-          : `Update to version ${pendingUpdate.version}, then relaunch.`
+        updateChecking
+          ? "Checking for updates…"
+          : updateState?.kind === "error"
+          ? `Update check failed:\n${updateState.message}\n\nClick to retry.`
+          : "Click to check for updates"
       }
       style={{
-        all: "unset",
-        cursor: updateInstalling ? "wait" : "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "4px 10px",
-        borderRadius: 999,
-        background: updateError ? "rgba(196,98,63,0.14)" : "rgba(127,145,114,0.18)",
-        border: `1px solid ${updateError ? "rgba(196,98,63,0.45)" : "rgba(127,145,114,0.45)"}`,
-        color: updateError ? "var(--terracotta)" : "var(--sage-dark)",
-        fontSize: 11,
-        fontWeight: 500,
-        letterSpacing: 0.2,
+        ...pillBase,
+        cursor: updateChecking || updateInstalling ? "wait" : "pointer",
+        background: "rgba(59,50,43,0.06)",
+        border: "1px solid rgba(59,50,43,0.15)",
+        color: "var(--ink-dim)",
+        fontFamily: "JetBrains Mono, monospace",
+        marginRight: 8,
       }}
     >
-      {updateInstalling
-        ? "Updating…"
-        : updateError
-        ? "Update failed — retry"
-        : `Update to v${pendingUpdate.version} · restart`}
+      {updateChecking ? "checking…" : installedVersion ? `v${installedVersion}` : "…"}
     </button>
-  ) : null;
+  );
+
+  // Secondary pill — only if an update is pending OR the last check errored.
+  let statusPill: React.ReactNode = null;
+  if (updateState?.kind === "pending") {
+    const notes = updateState.pending.notes;
+    statusPill = (
+      <button
+        onClick={() => void installUpdate()}
+        disabled={updateInstalling}
+        title={
+          updateInstallError
+            ? `Install failed: ${updateInstallError}`
+            : notes
+            ? `Release notes:\n\n${notes}`
+            : `Update to v${updateState.pending.version}, then relaunch.`
+        }
+        style={{
+          ...pillBase,
+          cursor: updateInstalling ? "wait" : "pointer",
+          background: updateInstallError ? "rgba(196,98,63,0.14)" : "rgba(127,145,114,0.18)",
+          border: `1px solid ${updateInstallError ? "rgba(196,98,63,0.45)" : "rgba(127,145,114,0.45)"}`,
+          color: updateInstallError ? "var(--terracotta)" : "var(--sage-dark)",
+        }}
+      >
+        {updateInstalling
+          ? "updating…"
+          : updateInstallError
+          ? "install failed — retry"
+          : `update to v${updateState.pending.version} · restart`}
+      </button>
+    );
+  } else if (updateState?.kind === "error") {
+    statusPill = (
+      <span
+        title={updateState.message}
+        style={{
+          ...pillBase,
+          background: "rgba(196,98,63,0.10)",
+          border: "1px solid rgba(196,98,63,0.35)",
+          color: "var(--terracotta)",
+          cursor: "help",
+        }}
+      >
+        ⚠ update check failed
+      </span>
+    );
+  }
+
+  const headerSlot = (
+    <>
+      {versionPill}
+      {statusPill}
+    </>
+  );
 
   const resetAll = () => {
     setStep("sheet");
@@ -288,7 +359,7 @@ export default function App() {
 
   if (!bootDone) {
     return (
-      <WindowChrome rightSlot={updatePill}>
+      <WindowChrome rightSlot={headerSlot}>
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)" }}>
           <div style={{ fontSize: 13, color: "var(--ink-dim)" }}>Loading…</div>
         </div>
@@ -301,7 +372,7 @@ export default function App() {
   }
 
   return (
-    <WindowChrome rightSlot={updatePill}>
+    <WindowChrome rightSlot={headerSlot}>
       <Sidebar currentStep={step} goTo={setStep} stepState={stepState} density={DENSITY} />
       <div
         style={{
