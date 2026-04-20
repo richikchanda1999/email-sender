@@ -29,6 +29,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -37,5 +38,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDExOUIyNDdGNzQ0QjM4MEYKUldRUE9FdDBmeVNiRVUyYWljZHVZNTZGR1JPWVQxUFNlaVY3cjZzdTlvN0NvcXNnd3h1M1ZqTHQK",
+      "endpoints": [
+        "https://github.com/richikchanda1999/email-sender/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
