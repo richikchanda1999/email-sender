@@ -1,6 +1,6 @@
 [package]
 name = "letterpress"
-version = "0.1.4"
+version = "0.1.5"
 description = "Letterpress — boho Excel email sender"
 authors = ["Lena Marchetti"]
 edition = "2021"
