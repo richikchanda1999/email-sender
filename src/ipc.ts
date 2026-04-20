@@ -99,6 +99,7 @@ export const ipc = {
       attachments: string[];
     }[];
     lookbackDays: number;
+    skipGmail?: boolean;
   }): Promise<DuplicateCheckResult> => {
     type RawHit = {
       row_index: number;
@@ -117,6 +118,7 @@ export const ipc = {
           attachments: r.attachments,
         })),
         lookback_days: args.lookbackDays,
+        skip_gmail: args.skipGmail ?? false,
       },
     });
     const hits: DuplicateHit[] = raw.hits.map((h) => ({

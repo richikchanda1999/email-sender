@@ -24,6 +24,10 @@ pub struct CheckRow {
 pub struct CheckArgs {
     pub rows: Vec<CheckRow>,
     pub lookback_days: u32,
+    /// When true, skip the Gmail API portion of the check (useful for fast
+    /// per-row pre-send checks where local history is authoritative enough).
+    #[serde(default)]
+    pub skip_gmail: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,11 +60,15 @@ pub async fn check_duplicates(
     let mut errors: Vec<String> = Vec::new();
 
     // Get access token up front; if we can't, skip the Gmail side but still do local.
-    let access_token = match flow::ensure_fresh_token(&app, state.inner.clone()).await {
-        Ok(t) => Some(t),
-        Err(e) => {
-            errors.push(format!("gmail check skipped — not signed in: {}", e));
-            None
+    let access_token = if args.skip_gmail {
+        None
+    } else {
+        match flow::ensure_fresh_token(&app, state.inner.clone()).await {
+            Ok(t) => Some(t),
+            Err(e) => {
+                errors.push(format!("gmail check skipped — not signed in: {}", e));
+                None
+            }
         }
     };
 
