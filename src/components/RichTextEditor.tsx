@@ -6,21 +6,84 @@ export type RichEditorHandle = {
   reset: (html: string) => void;
 };
 
-const FONT_FAMILIES = [
-  { label: "Sans Serif", value: "Inter, system-ui, sans-serif" },
-  { label: "Serif", value: "Fraunces, 'Times New Roman', serif" },
-  { label: "Monospace", value: "'JetBrains Mono', monospace" },
-  { label: "Arial", value: "Arial, sans-serif" },
-  { label: "Georgia", value: "Georgia, serif" },
-  { label: "Verdana", value: "Verdana, sans-serif" },
-  { label: "Courier", value: "'Courier New', monospace" },
+type FontOption = { label: string; value: string };
+
+// Curated cross-platform font list used when the Local Font Access API is
+// unavailable. Grouped by category; the UI renders the groups via <optgroup>.
+const CURATED_FONTS: { group: string; fonts: FontOption[] }[] = [
+  {
+    group: "App",
+    fonts: [
+      { label: "Sans Serif (Inter)", value: "Inter, system-ui, sans-serif" },
+      { label: "Serif (Fraunces)", value: "Fraunces, 'Times New Roman', serif" },
+      { label: "Monospace (JetBrains Mono)", value: "'JetBrains Mono', monospace" },
+    ],
+  },
+  {
+    group: "Sans-serif",
+    fonts: [
+      { label: "Arial", value: "Arial, sans-serif" },
+      { label: "Helvetica", value: "Helvetica, Arial, sans-serif" },
+      { label: "Helvetica Neue", value: "'Helvetica Neue', Helvetica, Arial, sans-serif" },
+      { label: "Verdana", value: "Verdana, sans-serif" },
+      { label: "Tahoma", value: "Tahoma, sans-serif" },
+      { label: "Trebuchet MS", value: "'Trebuchet MS', sans-serif" },
+      { label: "Segoe UI", value: "'Segoe UI', Tahoma, sans-serif" },
+      { label: "Calibri", value: "Calibri, sans-serif" },
+      { label: "Gill Sans", value: "'Gill Sans', sans-serif" },
+      { label: "Futura", value: "Futura, sans-serif" },
+      { label: "Avenir", value: "Avenir, 'Avenir Next', sans-serif" },
+      { label: "Optima", value: "Optima, sans-serif" },
+      { label: "Geneva", value: "Geneva, sans-serif" },
+    ],
+  },
+  {
+    group: "Serif",
+    fonts: [
+      { label: "Times New Roman", value: "'Times New Roman', Times, serif" },
+      { label: "Georgia", value: "Georgia, serif" },
+      { label: "Palatino", value: "Palatino, 'Palatino Linotype', 'Book Antiqua', serif" },
+      { label: "Garamond", value: "Garamond, serif" },
+      { label: "Baskerville", value: "Baskerville, serif" },
+      { label: "Didot", value: "Didot, serif" },
+      { label: "Hoefler Text", value: "'Hoefler Text', serif" },
+      { label: "Cambria", value: "Cambria, serif" },
+    ],
+  },
+  {
+    group: "Monospace",
+    fonts: [
+      { label: "Courier New", value: "'Courier New', Courier, monospace" },
+      { label: "Consolas", value: "Consolas, monospace" },
+      { label: "Monaco", value: "Monaco, monospace" },
+      { label: "Menlo", value: "Menlo, monospace" },
+      { label: "Andale Mono", value: "'Andale Mono', monospace" },
+      { label: "Lucida Console", value: "'Lucida Console', monospace" },
+    ],
+  },
+  {
+    group: "Display / Script",
+    fonts: [
+      { label: "Impact", value: "Impact, sans-serif" },
+      { label: "Comic Sans MS", value: "'Comic Sans MS', cursive" },
+      { label: "Brush Script MT", value: "'Brush Script MT', cursive" },
+      { label: "Copperplate", value: "Copperplate, serif" },
+      { label: "Snell Roundhand", value: "'Snell Roundhand', cursive" },
+    ],
+  },
 ];
 
-const FONT_SIZES = [
-  { label: "Small", value: "2" },
-  { label: "Normal", value: "3" },
-  { label: "Large", value: "5" },
-  { label: "Huge", value: "7" },
+// Pixel-valued sizes — mapped to real CSS so the spans we emit render the
+// same across every email client.
+const FONT_SIZES: FontOption[] = [
+  { label: "Tiny (10)", value: "10px" },
+  { label: "Small (12)", value: "12px" },
+  { label: "Normal (14)", value: "14px" },
+  { label: "Medium (16)", value: "16px" },
+  { label: "Large (18)", value: "18px" },
+  { label: "XL (22)", value: "22px" },
+  { label: "Huge (28)", value: "28px" },
+  { label: "Giant (36)", value: "36px" },
 ];
 
 const TEXT_COLORS = [
@@ -48,6 +111,7 @@ export const RichTextEditor = React.forwardRef<
   const editorRef = React.useRef<HTMLDivElement | null>(null);
   const seededRef = React.useRef(false);
   const [linkOpen, setLinkOpen] = React.useState(false);
+  const [systemFonts, setSystemFonts] = React.useState<FontOption[] | null>(null);
   const [linkUrl, setLinkUrl] = React.useState("");
   const savedRangeRef = React.useRef<Range | null>(null);
 
@@ -57,6 +121,36 @@ export const RichTextEditor = React.forwardRef<
       seededRef.current = true;
     }
   }, [value]);
+
+  // Try the Local Font Access API (Chromium). Safari/WebKit doesn't implement
+  // it yet — in that case we silently fall back to the curated list.
+  React.useEffect(() => {
+    const win = window as unknown as {
+      queryLocalFonts?: () => Promise<Array<{ family: string; fullName: string }>>;
+    };
+    if (typeof win.queryLocalFonts !== "function") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await win.queryLocalFonts!();
+        if (cancelled) return;
+        const seen = new Set<string>();
+        const opts: FontOption[] = [];
+        for (const f of result) {
+          if (seen.has(f.family)) continue;
+          seen.add(f.family);
+          opts.push({ label: f.family, value: `"${f.family}"` });
+        }
+        opts.sort((a, b) => a.label.localeCompare(b.label));
+        setSystemFonts(opts);
+      } catch {
+        // Permission denied, or API threw — stay with curated list
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // If caller resets value to something wildly different (e.g. resetAll), re-seed.
   React.useEffect(() => {
@@ -96,7 +190,50 @@ export const RichTextEditor = React.forwardRef<
     sel.addRange(range);
   }, []);
 
-  const ensureEditorSelection = () => {
+  // Wrap the current selection in a <span> with the given inline style, or
+  // (if the selection is collapsed) insert a styled span containing a
+  // zero-width placeholder so the next character typed inherits the style.
+  // This bypasses document.execCommand entirely, which is unreliable for
+  // fontName/fontSize inside Tauri's WebKit renderer.
+  const applyInlineStyle = (property: "fontFamily" | "fontSize", value: string) => {
+    ensureEditorSelection();
+    focus();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const root = editorRef.current;
+    if (!root || !root.contains(range.commonAncestorContainer)) return;
+
+    if (range.collapsed) {
+      // Typing-attribute path: insert a styled span with a zero-width space
+      // and place the caret just after the ZWSP so new characters inherit it.
+      const span = document.createElement("span");
+      span.style.setProperty(property === "fontFamily" ? "font-family" : "font-size", value);
+      span.appendChild(document.createTextNode("\u200B"));
+      range.insertNode(span);
+      const newRange = document.createRange();
+      const txt = span.firstChild as Text;
+      newRange.setStart(txt, 1);
+      newRange.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+    } else {
+      // Range selection: extract contents, wrap in a styled span, reinsert.
+      const contents = range.extractContents();
+      const span = document.createElement("span");
+      span.style.setProperty(property === "fontFamily" ? "font-family" : "font-size", value);
+      span.appendChild(contents);
+      range.insertNode(span);
+      const newRange = document.createRange();
+      newRange.selectNodeContents(span);
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+    }
+    emit();
+    saveSelection();
+  };
+
+  function ensureEditorSelection() {
     if (savedRangeRef.current) {
       restoreSelection();
       return;
@@ -175,6 +312,9 @@ export const RichTextEditor = React.forwardRef<
         exec={exec}
         onLink={openLinkPrompt}
         onBeforeDropdownOpen={saveSelection}
+        onFontFamily={(v) => applyInlineStyle("fontFamily", v)}
+        onFontSize={(v) => applyInlineStyle("fontSize", v)}
+        systemFonts={systemFonts}
       />
       <div
         ref={editorRef}
@@ -250,10 +390,16 @@ function Toolbar({
   exec,
   onLink,
   onBeforeDropdownOpen,
+  onFontFamily,
+  onFontSize,
+  systemFonts,
 }: {
   exec: (cmd: string, arg?: string) => void;
   onLink: () => void;
   onBeforeDropdownOpen: () => void;
+  onFontFamily: (v: string) => void;
+  onFontSize: (v: string) => void;
+  systemFonts: FontOption[] | null;
 }) {
   // Use onMouseDown + preventDefault so the editor keeps selection focus when clicking toolbar buttons.
   const keepFocus = (e: React.MouseEvent) => e.preventDefault();
@@ -275,21 +421,25 @@ function Toolbar({
       }}
       onMouseDown={keepFocus}
     >
-      <ToolbarSelect
+      <GroupedToolbarSelect
         title="Font family"
-        onChange={(v) => exec("fontName", v)}
+        onChange={onFontFamily}
         onBeforeOpen={onBeforeDropdownOpen}
-        options={FONT_FAMILIES}
+        groups={
+          systemFonts
+            ? [{ group: "System fonts", fonts: systemFonts }]
+            : CURATED_FONTS
+        }
         placeholder="Font"
-        width={130}
+        width={150}
       />
       <ToolbarSelect
         title="Font size"
-        onChange={(v) => exec("fontSize", v)}
+        onChange={onFontSize}
         onBeforeOpen={onBeforeDropdownOpen}
         options={FONT_SIZES}
         placeholder="Size"
-        width={80}
+        width={110}
       />
       <Divider />
       <IconBtn title="Bold (⌘B)" onClick={() => exec("bold")}>
@@ -411,6 +561,60 @@ function IconBtn({
 
 function Divider() {
   return <div style={{ width: 1, height: 20, background: "var(--line-strong)", margin: "0 4px" }} />;
+}
+
+function GroupedToolbarSelect({
+  onChange,
+  onBeforeOpen,
+  groups,
+  placeholder,
+  title,
+  width,
+}: {
+  onChange: (v: string) => void;
+  onBeforeOpen?: () => void;
+  groups: { group: string; fonts: FontOption[] }[];
+  placeholder: string;
+  title: string;
+  width: number;
+}) {
+  return (
+    <select
+      title={title}
+      onMouseDown={() => onBeforeOpen?.()}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (v) onChange(v);
+        e.target.value = "";
+      }}
+      defaultValue=""
+      style={{
+        width,
+        height: 26,
+        borderRadius: 6,
+        border: "1px solid var(--line)",
+        background: "var(--bg)",
+        color: "var(--ink)",
+        fontSize: 12,
+        padding: "0 6px",
+        margin: "0 2px",
+        cursor: "pointer",
+      }}
+    >
+      <option value="" disabled>
+        {placeholder}
+      </option>
+      {groups.map((g) => (
+        <optgroup key={g.group} label={g.group}>
+          {g.fonts.map((o) => (
+            <option key={o.value} value={o.value} style={{ fontFamily: o.value }}>
+              {o.label}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
 }
 
 function ToolbarSelect({
