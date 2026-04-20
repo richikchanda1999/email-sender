@@ -23,7 +23,14 @@ import { Sidebar } from "./components/Sidebar";
 import { StepRouter, AppState, AppSetters } from "./components/VariationB";
 import { SetupScreen } from "./components/SetupScreen";
 import { ipc } from "./ipc";
-import { checkForUpdate, getCurrentVersion, UpdateCheckResult } from "./updater";
+import {
+  checkForUpdate,
+  getCurrentVersion,
+  fetchManifestDirectly,
+  isNewerSemver,
+  RELEASES_PAGE,
+  UpdateCheckResult,
+} from "./updater";
 
 const DENSITY = "cozy" as const;
 
@@ -32,6 +39,7 @@ export default function App() {
   const [bootDone, setBootDone] = React.useState(false);
   const [updateState, setUpdateState] = React.useState<UpdateCheckResult | null>(null);
   const [installedVersion, setInstalledVersion] = React.useState<string>("");
+  const [remoteVersion, setRemoteVersion] = React.useState<string>("");
   const [updateInstalling, setUpdateInstalling] = React.useState(false);
   const [updateInstallError, setUpdateInstallError] = React.useState<string | null>(null);
   const [updateChecking, setUpdateChecking] = React.useState(false);
@@ -142,14 +150,20 @@ export default function App() {
     void boot();
   }, [boot]);
 
-  // Boot-time check for a newer release. Also read the installed version.
+  // Boot-time check for a newer release. Runs the plugin's check() AND a
+  // direct fetch of latest.json in parallel, so we can detect the case where
+  // the plugin silently says "no update" but the remote actually advertises
+  // a newer version (which has happened in the wild).
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
       const v = await getCurrentVersion();
       if (!cancelled) setInstalledVersion(v);
-      const u = await checkForUpdate();
-      if (!cancelled) setUpdateState(u);
+      const [u, m] = await Promise.all([checkForUpdate(), fetchManifestDirectly()]);
+      if (!cancelled) {
+        setUpdateState(u);
+        if (m) setRemoteVersion(m.version);
+      }
     })();
     return () => {
       cancelled = true;
@@ -160,10 +174,20 @@ export default function App() {
     setUpdateChecking(true);
     setUpdateInstallError(null);
     try {
-      const u = await checkForUpdate();
+      const [u, m] = await Promise.all([checkForUpdate(), fetchManifestDirectly()]);
       setUpdateState(u);
+      if (m) setRemoteVersion(m.version);
     } finally {
       setUpdateChecking(false);
+    }
+  }, []);
+
+  const openReleasesPage = React.useCallback(async () => {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(RELEASES_PAGE);
+    } catch (e) {
+      console.error("open releases page:", e);
     }
   }, []);
 
@@ -191,18 +215,37 @@ export default function App() {
     letterSpacing: 0.2,
   };
 
+  // Has the plugin failed to notice a newer version the endpoint is advertising?
+  const pluginStuck =
+    updateState?.kind === "none" &&
+    !!remoteVersion &&
+    !!installedVersion &&
+    isNewerSemver(remoteVersion, installedVersion);
+
+  const versionTooltip = (() => {
+    const parts = [
+      `Running: v${installedVersion || "?"}`,
+      remoteVersion ? `Endpoint advertises: v${remoteVersion}` : "Endpoint: unreachable",
+    ];
+    if (updateState?.kind === "error") {
+      parts.push(`Plugin error: ${updateState.message}`);
+    } else if (updateState?.kind === "pending") {
+      parts.push(`Plugin: update to v${updateState.pending.version} ready`);
+    } else if (updateState?.kind === "none") {
+      parts.push(
+        pluginStuck ? "Plugin: says up-to-date (disagrees with endpoint)" : "Plugin: up to date"
+      );
+    }
+    parts.push("", "Click to re-check.");
+    return parts.join("\n");
+  })();
+
   // Version pill — always visible. Click to re-run the updater check.
   const versionPill = (
     <button
       onClick={() => void recheck()}
       disabled={updateChecking || updateInstalling}
-      title={
-        updateChecking
-          ? "Checking for updates…"
-          : updateState?.kind === "error"
-          ? `Update check failed:\n${updateState.message}\n\nClick to retry.`
-          : "Click to check for updates"
-      }
+      title={updateChecking ? "Checking for updates…" : versionTooltip}
       style={{
         ...pillBase,
         cursor: updateChecking || updateInstalling ? "wait" : "pointer",
@@ -261,6 +304,24 @@ export default function App() {
       >
         ⚠ update check failed
       </span>
+    );
+  } else if (pluginStuck) {
+    // Plugin says "no update" but the endpoint clearly advertises a newer version.
+    // Give the user an escape hatch — click to open the releases page in the browser.
+    statusPill = (
+      <button
+        onClick={() => void openReleasesPage()}
+        title={`Plugin reports up-to-date, but latest.json advertises v${remoteVersion}. Click to open the releases page and download manually.`}
+        style={{
+          ...pillBase,
+          cursor: "pointer",
+          background: "rgba(196,98,63,0.10)",
+          border: "1px solid rgba(196,98,63,0.35)",
+          color: "var(--terracotta)",
+        }}
+      >
+        ⚠ v{remoteVersion} at GitHub — download
+      </button>
     );
   }
 

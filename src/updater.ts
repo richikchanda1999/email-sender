@@ -2,6 +2,46 @@ import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 
+/** Must stay in sync with `plugins.updater.endpoints[0]` in tauri.conf.json. */
+export const MANIFEST_URL =
+  "https://github.com/richikchanda1999/email-sender/releases/latest/download/latest.json";
+
+export const RELEASES_PAGE = "https://github.com/richikchanda1999/email-sender/releases/latest";
+
+/** Direct GET of the update manifest, bypassing the updater plugin.
+ * Lets us independently confirm what the endpoint advertises and diagnose
+ * cases where the plugin's internal version check disagrees with reality. */
+export async function fetchManifestDirectly(): Promise<{
+  version: string;
+  platforms: string[];
+} | null> {
+  try {
+    const res = await fetch(MANIFEST_URL, { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      version: String(data.version ?? ""),
+      platforms: Object.keys(data.platforms ?? {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function isNewerSemver(remote: string, current: string): boolean {
+  const parse = (s: string) =>
+    s.split(".").map((n) => parseInt(n, 10)).map((n) => (Number.isFinite(n) ? n : 0));
+  const r = parse(remote);
+  const c = parse(current);
+  for (let i = 0; i < Math.max(r.length, c.length); i++) {
+    const a = r[i] ?? 0;
+    const b = c[i] ?? 0;
+    if (a > b) return true;
+    if (a < b) return false;
+  }
+  return false;
+}
+
 export type PendingUpdate = {
   version: string;
   currentVersion: string;
