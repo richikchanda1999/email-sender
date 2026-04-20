@@ -76,16 +76,64 @@ export const RichTextEditor = React.forwardRef<
     editorRef.current?.focus();
   };
 
+  const saveSelection = React.useCallback(() => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    // Only save ranges that live inside this editor — don't capture selections
+    // that belong to toolbar inputs or anything else in the document.
+    if (editorRef.current && editorRef.current.contains(range.commonAncestorContainer)) {
+      savedRangeRef.current = range.cloneRange();
+    }
+  }, []);
+
+  const restoreSelection = React.useCallback(() => {
+    const range = savedRangeRef.current;
+    if (!range || !editorRef.current) return;
+    const sel = window.getSelection();
+    if (!sel) return;
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }, []);
+
+  const ensureEditorSelection = () => {
+    if (savedRangeRef.current) {
+      restoreSelection();
+      return;
+    }
+    // No prior selection — place caret at end of editor so the next command
+    // (e.g. fontName, fontSize) affects the typing attribute for what comes next.
+    const el = editorRef.current;
+    if (!el) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  };
+
   const exec = (cmd: string, arg?: string) => {
+    ensureEditorSelection();
     focus();
+    // Emit <span style="..."> instead of deprecated <font> tags so font-family
+    // and font-size changes render reliably and survive the MIME roundtrip.
+    try {
+      document.execCommand("styleWithCSS", false, "true");
+    } catch {
+      /* older browsers throw; ignore */
+    }
     document.execCommand(cmd, false, arg);
     emit();
+    saveSelection();
   };
 
   const insertHtml = (html: string) => {
+    ensureEditorSelection();
     focus();
     document.execCommand("insertHTML", false, html);
     emit();
+    saveSelection();
   };
 
   React.useImperativeHandle(ref, () => ({
@@ -98,22 +146,6 @@ export const RichTextEditor = React.forwardRef<
       onChange(html);
     },
   }));
-
-  const saveSelection = () => {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
-    }
-  };
-
-  const restoreSelection = () => {
-    const range = savedRangeRef.current;
-    if (range) {
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(range);
-    }
-  };
 
   const applyLink = () => {
     if (!linkUrl) {
@@ -142,13 +174,19 @@ export const RichTextEditor = React.forwardRef<
       <Toolbar
         exec={exec}
         onLink={openLinkPrompt}
+        onBeforeDropdownOpen={saveSelection}
       />
       <div
         ref={editorRef}
         contentEditable
         suppressContentEditableWarning
         onInput={emit}
-        onBlur={emit}
+        onMouseUp={saveSelection}
+        onKeyUp={saveSelection}
+        onBlur={() => {
+          saveSelection();
+          emit();
+        }}
         onPaste={(e) => {
           e.preventDefault();
           const text = e.clipboardData.getData("text/plain");
@@ -211,9 +249,11 @@ export const RichTextEditor = React.forwardRef<
 function Toolbar({
   exec,
   onLink,
+  onBeforeDropdownOpen,
 }: {
   exec: (cmd: string, arg?: string) => void;
   onLink: () => void;
+  onBeforeDropdownOpen: () => void;
 }) {
   // Use onMouseDown + preventDefault so the editor keeps selection focus when clicking toolbar buttons.
   const keepFocus = (e: React.MouseEvent) => e.preventDefault();
@@ -238,6 +278,7 @@ function Toolbar({
       <ToolbarSelect
         title="Font family"
         onChange={(v) => exec("fontName", v)}
+        onBeforeOpen={onBeforeDropdownOpen}
         options={FONT_FAMILIES}
         placeholder="Font"
         width={130}
@@ -245,6 +286,7 @@ function Toolbar({
       <ToolbarSelect
         title="Font size"
         onChange={(v) => exec("fontSize", v)}
+        onBeforeOpen={onBeforeDropdownOpen}
         options={FONT_SIZES}
         placeholder="Size"
         width={80}
@@ -373,12 +415,14 @@ function Divider() {
 
 function ToolbarSelect({
   onChange,
+  onBeforeOpen,
   options,
   placeholder,
   title,
   width,
 }: {
   onChange: (v: string) => void;
+  onBeforeOpen?: () => void;
   options: { label: string; value: string }[];
   placeholder: string;
   title: string;
@@ -387,7 +431,11 @@ function ToolbarSelect({
   return (
     <select
       title={title}
-      onMouseDown={(e) => e.preventDefault()}
+      onMouseDown={() => {
+        // Capture the editor's current range BEFORE the native dropdown steals
+        // focus. This is what makes fontName / fontSize apply to the right text.
+        onBeforeOpen?.();
+      }}
       onChange={(e) => {
         const v = e.target.value;
         if (v) onChange(v);
