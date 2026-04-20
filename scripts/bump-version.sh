@@ -63,20 +63,23 @@ node -e '
   fs.writeFileSync("src-tauri/tauri.conf.json", JSON.stringify(p, null, 2) + "\n");
 ' "$VERSION"
 
-# Cargo.toml — only the first `version =` under [package]
-python3 -c '
+# Cargo.toml — only the first `version =` under [package].
+# Using \g<1> for the group reference (not \1) avoids backslash-escape
+# ambiguity with the surrounding quotes.
+python3 - "$VERSION" <<'PY'
 import re, sys, pathlib
+version = sys.argv[1]
 path = pathlib.Path("src-tauri/Cargo.toml")
 text = path.read_text()
 text = re.sub(
-    r"^(version\s*=\s*)\"[^\"]+\"",
-    r"\1\"" + sys.argv[1] + "\"",
+    r'^(version\s*=\s*)"[^"]+"',
+    lambda m: f'{m.group(1)}"{version}"',
     text,
     count=1,
     flags=re.MULTILINE,
 )
 path.write_text(text)
-' "$VERSION"
+PY
 
 # Keep Cargo.lock in sync
 (cd src-tauri && cargo update --workspace --offline 2>/dev/null || cargo update -p letterpress 2>/dev/null || true)
