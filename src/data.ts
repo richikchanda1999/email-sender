@@ -45,6 +45,46 @@ export type LogEntry = {
 
 export type ConfigStatus = { present: boolean; path: string };
 
+export type SessionMeta = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/**
+ * Campaign state serialized per session. The sheet is stored by reference only
+ * — `sheetRef.path` + `sheetName` — so we don't duplicate xlsx data on disk.
+ * Columns + rowCount are kept for fast display + to detect drift on resume.
+ */
+export type SessionDoc = {
+  schemaVersion: number;
+  id: string;
+  name: string;
+  activeStep: StepKey;
+  sheetRef: {
+    path: string;
+    sheetName: string;
+    availableSheets: string[];
+    columns: string[];
+    rowCount: number;
+  } | null;
+  template: string;
+  subject: string;
+  cc: string[];
+  rules: Rules;
+  attachmentsFolder: string | null;
+  fixed: FixedFile[];
+  emailColumn: string | null;
+  nameColumn: string | null;
+  deferMissing: boolean;
+  sendStatus: RowStatus[];
+  sendErrors: Record<number, string>;
+  logEntries: LogEntry[];
+  sendDupHits: Record<number, DuplicateHit[]> | null;
+  sendDupErrors: string[];
+};
+
 export type DuplicateHit = {
   rowIndex: number;
   source: "local" | "gmail";

@@ -6,8 +6,24 @@ import type {
   GoogleUser,
   LogEntry,
   ResolvedAttachment,
+  SessionDoc,
+  SessionMeta,
   Sheet,
 } from "./data";
+
+type RawSessionMeta = {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+const metaFromRaw = (r: RawSessionMeta): SessionMeta => ({
+  id: r.id,
+  name: r.name,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+});
 
 type RawSheet = {
   path: string;
@@ -130,6 +146,43 @@ export const ipc = {
     }));
     return { hits, checkedRows: raw.checked_rows, errors: raw.errors };
   },
+
+  listSessions: async (): Promise<SessionMeta[]> => {
+    const raw = await invoke<RawSessionMeta[]>("list_sessions");
+    return raw.map(metaFromRaw);
+  },
+  listTrash: async (): Promise<SessionMeta[]> => {
+    const raw = await invoke<RawSessionMeta[]>("list_trash");
+    return raw.map(metaFromRaw);
+  },
+  loadSession: async (id: string): Promise<SessionDoc> => {
+    const raw = await invoke<Record<string, unknown>>("load_session", { id });
+    // Rust writes snake_case but for session docs the frontend owns the schema,
+    // so we dump whatever we wrote. The only keys set by backend are
+    // schema_version and id; translate those.
+    const out: any = { ...raw };
+    if ("schema_version" in out) {
+      out.schemaVersion = out.schema_version;
+      delete out.schema_version;
+    }
+    return out as SessionDoc;
+  },
+  saveSession: async (id: string, doc: SessionDoc): Promise<SessionMeta> => {
+    // Mirror: strip camelCase we never want on disk. We keep the frontend shape
+    // as-is since we read it back verbatim. Backend only touches schema_version + id.
+    const payload = { ...doc, schema_version: doc.schemaVersion };
+    const raw = await invoke<RawSessionMeta>("save_session", { id, doc: payload });
+    return metaFromRaw(raw);
+  },
+  createSession: async (name: string): Promise<SessionMeta> => {
+    const raw = await invoke<RawSessionMeta>("create_session", { name });
+    return metaFromRaw(raw);
+  },
+  renameSession: (id: string, name: string) =>
+    invoke<void>("rename_session", { id, name }),
+  deleteSession: (id: string) => invoke<void>("delete_session", { id }),
+  restoreSession: (id: string) => invoke<void>("restore_session", { id }),
+  purgeSession: (id: string) => invoke<void>("purge_session", { id }),
 
   exportLog: (entries: LogEntry[]) =>
     invoke<string>("export_log", {
