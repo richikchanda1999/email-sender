@@ -21,12 +21,16 @@ import { Sidebar } from "./components/Sidebar";
 import { StepRouter, AppState, AppSetters } from "./components/VariationB";
 import { SetupScreen } from "./components/SetupScreen";
 import { ipc } from "./ipc";
+import { checkForUpdate, PendingUpdate } from "./updater";
 
 const DENSITY = "cozy" as const;
 
 export default function App() {
   const [config, setConfig] = React.useState<ConfigStatus | null>(null);
   const [bootDone, setBootDone] = React.useState(false);
+  const [pendingUpdate, setPendingUpdate] = React.useState<PendingUpdate | null>(null);
+  const [updateInstalling, setUpdateInstalling] = React.useState(false);
+  const [updateError, setUpdateError] = React.useState<string | null>(null);
 
   const [step, setStep] = React.useState<StepKey>("sheet");
   const [sheet, setSheet] = React.useState<Sheet | null>(null);
@@ -120,6 +124,66 @@ export default function App() {
     void boot();
   }, [boot]);
 
+  // Silent boot-time check for a newer release. Safe to no-op on failure; an
+  // offline launch or a misconfigured updater shouldn't block the app.
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const u = await checkForUpdate();
+      if (!cancelled) setPendingUpdate(u);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const installUpdate = React.useCallback(async () => {
+    if (!pendingUpdate) return;
+    setUpdateInstalling(true);
+    setUpdateError(null);
+    try {
+      await pendingUpdate.install();
+    } catch (e: any) {
+      setUpdateError(typeof e === "string" ? e : e?.message ?? "update failed");
+      setUpdateInstalling(false);
+    }
+  }, [pendingUpdate]);
+
+  const updatePill = pendingUpdate ? (
+    <button
+      onClick={() => void installUpdate()}
+      disabled={updateInstalling}
+      title={
+        updateError
+          ? `Update failed: ${updateError}`
+          : pendingUpdate.notes
+          ? `Release notes:\n\n${pendingUpdate.notes}`
+          : `Update to version ${pendingUpdate.version}, then relaunch.`
+      }
+      style={{
+        all: "unset",
+        cursor: updateInstalling ? "wait" : "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "4px 10px",
+        borderRadius: 999,
+        background: updateError ? "rgba(196,98,63,0.14)" : "rgba(127,145,114,0.18)",
+        border: `1px solid ${updateError ? "rgba(196,98,63,0.45)" : "rgba(127,145,114,0.45)"}`,
+        color: updateError ? "var(--terracotta)" : "var(--sage-dark)",
+        fontSize: 11,
+        fontWeight: 500,
+        letterSpacing: 0.2,
+      }}
+    >
+      {updateInstalling
+        ? "Updating…"
+        : updateError
+        ? "Update failed — retry"
+        : `Update to v${pendingUpdate.version} · restart`}
+    </button>
+  ) : null;
+
   const resetAll = () => {
     setStep("sheet");
     setSheet(null);
@@ -194,7 +258,7 @@ export default function App() {
 
   if (!bootDone) {
     return (
-      <WindowChrome>
+      <WindowChrome rightSlot={updatePill}>
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)" }}>
           <div style={{ fontSize: 13, color: "var(--ink-dim)" }}>Loading…</div>
         </div>
@@ -207,7 +271,7 @@ export default function App() {
   }
 
   return (
-    <WindowChrome>
+    <WindowChrome rightSlot={updatePill}>
       <Sidebar currentStep={step} goTo={setStep} stepState={stepState} density={DENSITY} />
       <div
         style={{

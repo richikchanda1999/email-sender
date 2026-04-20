@@ -1,6 +1,14 @@
 import React from "react";
 
-export function WindowChrome({ title = "Letterpress", children }: { title?: string; children: React.ReactNode }) {
+export function WindowChrome({
+  title = "Letterpress",
+  children,
+  rightSlot,
+}: {
+  title?: string;
+  children: React.ReactNode;
+  rightSlot?: React.ReactNode;
+}) {
   return (
     <div
       style={{
@@ -35,6 +43,7 @@ export function WindowChrome({ title = "Letterpress", children }: { title?: stri
           <span style={{ opacity: 0.4, margin: "0 6px" }}>·</span>
           <span style={{ fontSize: 12, fontFamily: "Inter, sans-serif", opacity: 0.7 }}>Untitled campaign</span>
         </div>
+        {rightSlot && <div style={{ display: "flex", alignItems: "center" }}>{rightSlot}</div>}
       </div>
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>{children}</div>
     </div>
