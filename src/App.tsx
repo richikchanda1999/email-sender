@@ -12,6 +12,8 @@ import {
   ConfigStatus,
   DuplicateHit,
   RowStatus,
+  SessionDoc,
+  SessionMeta,
   DEFAULT_TEMPLATE,
   DEFAULT_SUBJECT,
   DEFAULT_PATTERN,
@@ -22,6 +24,8 @@ import { WindowChrome } from "./components/WindowChrome";
 import { Sidebar } from "./components/Sidebar";
 import { StepRouter, AppState, AppSetters } from "./components/VariationB";
 import { SetupScreen } from "./components/SetupScreen";
+import { SessionPicker } from "./components/SessionPicker";
+import { SessionMenu } from "./components/SessionMenu";
 import { ipc } from "./ipc";
 import {
   checkForUpdate,
@@ -72,6 +76,17 @@ export default function App() {
   const [sendDupErrors, setSendDupErrors] = React.useState<string[]>([]);
   const [deferMissing, setDeferMissing] = React.useState(true);
 
+  // Session management
+  const [sessions, setSessions] = React.useState<SessionMeta[]>([]);
+  const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null);
+  const [activeSessionName, setActiveSessionName] = React.useState<string>("Untitled campaign");
+  const [sessionStage, setSessionStage] = React.useState<"booting" | "picking" | "ready">("booting");
+  // When re-applying a saved session, we want to bypass the sheet-change reset
+  // effect. Pre-seed prevSheetKey before setSheet so the effect sees "no change".
+  const prevSheetKeyRef = React.useRef<string | null>(null);
+  // Suppress auto-save while a session is being loaded/restored.
+  const suspendAutoSaveRef = React.useRef(true);
+
   // Track the last smart-default values we seeded so we can detect whether the
   // user has edited them. If the current state still equals the last seed, a
   // new sheet's smart defaults will overwrite; otherwise we leave the user's
@@ -87,8 +102,14 @@ export default function App() {
   });
 
   React.useEffect(() => {
+    // Gate: only run the reset/detect path when the sheet IDENTITY actually
+    // changes (different path or sheet-name). This prevents a session-resume
+    // setSheet(loaded) call from wiping the freshly-restored send state.
+    const key = sheet ? `${sheet.path}::${sheet.sheetName}` : null;
+    if (prevSheetKeyRef.current === key) return;
+    prevSheetKeyRef.current = key;
+
     // Reset every send-step artifact whenever the campaign's source sheet changes.
-    // Not triggered by emailColumn/nameColumn tweaks — those don't invalidate prior sends.
     setSendStatus([]);
     setSendErrors({});
     setSendDupHits(null);
@@ -325,12 +346,262 @@ export default function App() {
     );
   }
 
+  const sessionChip = activeSessionId ? (
+    <SessionMenu
+      activeId={activeSessionId}
+      activeName={activeSessionName}
+      sessions={sessions}
+      onRename={(n) => void renameActiveSession(n)}
+      onSwitch={(id) => void switchToSession(id)}
+      onNew={() => void startNewSession()}
+      onDelete={() => void deleteActiveSession()}
+    />
+  ) : null;
+
   const headerSlot = (
     <>
+      {sessionChip}
       {versionPill}
       {statusPill}
     </>
   );
+
+  // ---- Session management ----
+
+  const buildSessionDoc = React.useCallback(
+    (): SessionDoc => ({
+      schemaVersion: 1,
+      id: activeSessionId ?? "",
+      name: activeSessionName,
+      activeStep: step,
+      sheetRef: sheet
+        ? {
+            path: sheet.path,
+            sheetName: sheet.sheetName,
+            availableSheets: sheet.availableSheets,
+            columns: sheet.columns,
+            rowCount: sheet.rows.length,
+          }
+        : null,
+      template,
+      subject,
+      cc,
+      rules,
+      attachmentsFolder,
+      fixed,
+      emailColumn,
+      nameColumn,
+      deferMissing,
+      sendStatus,
+      sendErrors,
+      logEntries,
+      sendDupHits,
+      sendDupErrors,
+    }),
+    [
+      activeSessionId, activeSessionName, step, sheet, template, subject, cc, rules,
+      attachmentsFolder, fixed, emailColumn, nameColumn, deferMissing,
+      sendStatus, sendErrors, logEntries, sendDupHits, sendDupErrors,
+    ]
+  );
+
+  const applySessionDoc = React.useCallback(async (doc: SessionDoc) => {
+    suspendAutoSaveRef.current = true;
+    setActiveSessionName(doc.name || "Untitled campaign");
+    // Pre-seed prevSheetKey so the sheet-change effect treats the incoming
+    // sheet as unchanged and does NOT reset send state.
+    if (doc.sheetRef) {
+      prevSheetKeyRef.current = `${doc.sheetRef.path}::${doc.sheetRef.sheetName}`;
+    } else {
+      prevSheetKeyRef.current = null;
+    }
+    // Apply the cheap fields first.
+    setStep(doc.activeStep ?? "sheet");
+    setTemplate(doc.template ?? DEFAULT_TEMPLATE);
+    setSubject(doc.subject ?? DEFAULT_SUBJECT);
+    setCc(doc.cc ?? []);
+    setRules(doc.rules ?? {
+      pattern: DEFAULT_PATTERN, caseInsensitive: true, fuzzy: true, required: false,
+    });
+    setAttachmentsFolder(doc.attachmentsFolder ?? null);
+    setFixed(doc.fixed ?? []);
+    setEmailColumn(doc.emailColumn ?? null);
+    setNameColumn(doc.nameColumn ?? null);
+    setDeferMissing(doc.deferMissing ?? true);
+    setSendStatus(doc.sendStatus ?? []);
+    setSendErrors(doc.sendErrors ?? {});
+    setSendDupHits(doc.sendDupHits ?? null);
+    setSendDupErrors(doc.sendDupErrors ?? []);
+    setLogEntries(doc.logEntries ?? []);
+
+    // Re-load the sheet in the background. If row count / columns diverge
+    // from what the session expects, clear send state — stale indices would
+    // point at different rows.
+    if (doc.sheetRef) {
+      try {
+        const loaded = await ipc.loadSpreadsheet(doc.sheetRef.path, doc.sheetRef.sheetName);
+        const rowsMatch = loaded.rows.length === doc.sheetRef.rowCount;
+        const colsMatch = loaded.columns.join("|") === doc.sheetRef.columns.join("|");
+        setSheet(loaded);
+        if (!rowsMatch || !colsMatch) {
+          setSendStatus([]);
+          setSendErrors({});
+          setSendDupHits(null);
+          setSendDupErrors([]);
+        }
+      } catch {
+        setSheet(null);
+      }
+    } else {
+      setSheet(null);
+    }
+
+    // Release auto-save on the next macrotask so any cascading state updates
+    // land first and don't each trigger a save.
+    setTimeout(() => {
+      suspendAutoSaveRef.current = false;
+    }, 0);
+  }, []);
+
+  const refreshSessionList = React.useCallback(async () => {
+    try {
+      const list = await ipc.listSessions();
+      setSessions(list);
+    } catch (e) {
+      console.error("list sessions:", e);
+    }
+  }, []);
+
+  const openSession = React.useCallback(async (id: string) => {
+    try {
+      const doc = await ipc.loadSession(id);
+      setActiveSessionId(id);
+      await applySessionDoc(doc);
+      setSessionStage("ready");
+    } catch (e) {
+      console.error("load session:", e);
+    }
+  }, [applySessionDoc]);
+
+  const startNewSession = React.useCallback(async () => {
+    try {
+      suspendAutoSaveRef.current = true;
+      const meta = await ipc.createSession("Untitled campaign");
+      setActiveSessionId(meta.id);
+      setActiveSessionName(meta.name);
+      setSessions((prev) => [...prev, meta]);
+      // Reset all campaign-scoped state to defaults
+      prevSheetKeyRef.current = null;
+      setStep("sheet");
+      setSheet(null);
+      setTemplate(DEFAULT_TEMPLATE);
+      setSubject(DEFAULT_SUBJECT);
+      setCc([]);
+      setRules({ pattern: DEFAULT_PATTERN, caseInsensitive: true, fuzzy: true, required: false });
+      setAttachmentsFolder(null);
+      setFixed([]);
+      setEmailColumn(null);
+      setNameColumn(null);
+      setDeferMissing(true);
+      setSendStatus([]);
+      setSendErrors({});
+      setSendDupHits(null);
+      setSendDupErrors([]);
+      setLogEntries([]);
+      lastSeedRef.current = {
+        template: DEFAULT_TEMPLATE,
+        subject: DEFAULT_SUBJECT,
+        pattern: DEFAULT_PATTERN,
+      };
+      setSessionStage("ready");
+      setTimeout(() => { suspendAutoSaveRef.current = false; }, 0);
+    } catch (e) {
+      console.error("create session:", e);
+    }
+  }, []);
+
+  const renameActiveSession = React.useCallback(async (name: string) => {
+    if (!activeSessionId) return;
+    try {
+      await ipc.renameSession(activeSessionId, name);
+      setActiveSessionName(name);
+      setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? { ...s, name } : s)));
+    } catch (e) {
+      console.error("rename session:", e);
+    }
+  }, [activeSessionId]);
+
+  const deleteActiveSession = React.useCallback(async () => {
+    if (!activeSessionId) return;
+    const id = activeSessionId;
+    try {
+      await ipc.deleteSession(id);
+      const remaining = sessions.filter((s) => s.id !== id);
+      setSessions(remaining);
+      if (remaining.length === 0) {
+        await startNewSession();
+      } else {
+        await openSession(remaining[0].id);
+      }
+    } catch (e) {
+      console.error("delete session:", e);
+    }
+  }, [activeSessionId, sessions, openSession, startNewSession]);
+
+  const switchToSession = React.useCallback(async (id: string) => {
+    // Flush any pending save on the current session before switching would be
+    // ideal; simpler: suspend auto-save, load new, resume.
+    suspendAutoSaveRef.current = true;
+    await openSession(id);
+  }, [openSession]);
+
+  // Boot: after config + currentUser rehydration, pick/create/show-picker
+  React.useEffect(() => {
+    if (!bootDone) return;
+    if (config && !config.present) return; // SetupScreen handles this
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await ipc.listSessions();
+        if (cancelled) return;
+        setSessions(list);
+        if (list.length === 0) {
+          await startNewSession();
+        } else if (list.length === 1) {
+          await openSession(list[0].id);
+        } else {
+          setSessionStage("picking");
+        }
+      } catch (e) {
+        console.error("boot sessions:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bootDone, config, openSession, startNewSession]);
+
+  // Debounced auto-save
+  React.useEffect(() => {
+    if (sessionStage !== "ready") return;
+    if (!activeSessionId) return;
+    if (suspendAutoSaveRef.current) return;
+    const doc = buildSessionDoc();
+    const timer = setTimeout(() => {
+      ipc
+        .saveSession(activeSessionId, doc)
+        .then((meta) => {
+          setSessions((prev) => {
+            const next = [...prev];
+            const i = next.findIndex((s) => s.id === meta.id);
+            if (i >= 0) next[i] = meta;
+            return next;
+          });
+        })
+        .catch((e) => console.warn("save session:", e));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [buildSessionDoc, sessionStage, activeSessionId]);
 
   const resetAll = () => {
     setStep("sheet");
@@ -430,6 +701,40 @@ export default function App() {
 
   if (config && !config.present) {
     return <SetupScreen configPath={config.path} onRetry={() => void boot()} />;
+  }
+
+  if (sessionStage === "picking") {
+    return (
+      <SessionPicker
+        sessions={sessions}
+        onPick={(id) => void openSession(id)}
+        onNew={() => void startNewSession()}
+        onDelete={async (id) => {
+          try {
+            await ipc.deleteSession(id);
+            await refreshSessionList();
+          } catch (e) {
+            console.error("delete session:", e);
+          }
+        }}
+        rightSlot={
+          <>
+            {versionPill}
+            {statusPill}
+          </>
+        }
+      />
+    );
+  }
+
+  if (sessionStage === "booting") {
+    return (
+      <WindowChrome rightSlot={<>{versionPill}{statusPill}</>}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)" }}>
+          <div style={{ fontSize: 13, color: "var(--ink-dim)" }}>Loading your session…</div>
+        </div>
+      </WindowChrome>
+    );
   }
 
   return (
