@@ -122,6 +122,8 @@ export const ipc = {
     }[];
     lookbackDays: number;
     skipGmail?: boolean;
+    /// Optional id used to scope `dupcheck_progress` events back to this call.
+    checkId?: string;
   }): Promise<DuplicateCheckResult> => {
     type RawHit = {
       row_index: number;
@@ -143,6 +145,7 @@ export const ipc = {
         })),
         lookback_days: args.lookbackDays,
         skip_gmail: args.skipGmail ?? false,
+        check_id: args.checkId ?? "",
       },
     });
     const hits: DuplicateHit[] = raw.hits.map((h) => ({

@@ -19,6 +19,15 @@ import { IconCheck, IconMail, IconPaperclip, IconSend, IconX, IconDoc } from "..
 import { Spinner } from "./StepAuth";
 import { Toggle } from "./StepAttachments";
 import { ipc } from "../ipc";
+import { listen } from "@tauri-apps/api/event";
+
+type DupcheckProgressPayload = {
+  checkId: string;
+  checked: number;
+  total: number;
+  rowIndex: number;
+  recipient: string;
+};
 
 type RowMeta = {
   record: Record<string, string>;
@@ -145,6 +154,11 @@ export function StepSend({
   const [searchText, setSearchText] = React.useState("");
   const [perRowDupe, setPerRowDupe] = React.useState<DuplicateHit[] | null>(null);
   const [perRowDupeChecking, setPerRowDupeChecking] = React.useState(false);
+  const [dupProgress, setDupProgress] = React.useState<{
+    checked: number;
+    total: number;
+    recipient: string;
+  } | null>(null);
   const [lastClickedIdx, setLastClickedIdx] = React.useState<number | null>(null);
 
   const attachmentsConfigured = resolved.length > 0;
@@ -497,6 +511,10 @@ export function StepSend({
     if (!sheet || !user) return;
     setDupChecking(true);
     setDupErrors([]);
+    const checkId = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `dup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let unlisten: (() => void) | null = null;
     try {
       const rowsPayload = rowMetas
         .map((m, i) => {
@@ -515,7 +533,20 @@ export function StepSend({
           };
         })
         .filter((x): x is NonNullable<typeof x> => !!x);
-      const result = await ipc.checkDuplicates({ rows: rowsPayload, lookbackDays: 90 });
+      setDupProgress({ checked: 0, total: rowsPayload.length, recipient: "" });
+      unlisten = await listen<DupcheckProgressPayload>("dupcheck_progress", (e) => {
+        if (e.payload.checkId !== checkId) return;
+        setDupProgress({
+          checked: e.payload.checked,
+          total: e.payload.total,
+          recipient: e.payload.recipient,
+        });
+      });
+      const result = await ipc.checkDuplicates({
+        rows: rowsPayload,
+        lookbackDays: 90,
+        checkId,
+      });
       const grouped: Record<number, DuplicateHit[]> = {};
       for (const h of result.hits) {
         if (!grouped[h.rowIndex]) grouped[h.rowIndex] = [];
@@ -530,6 +561,8 @@ export function StepSend({
         setAuthExpired(true);
       }
     } finally {
+      if (unlisten) unlisten();
+      setDupProgress(null);
       setDupChecking(false);
     }
   };
@@ -990,6 +1023,58 @@ export function StepSend({
         >
           {dupChecking ? "Checking…" : "Check for duplicates"}
         </button>
+        {dupChecking && dupProgress && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              minWidth: 260,
+              maxWidth: 420,
+              flex: "0 1 auto",
+            }}
+          >
+            <div
+              style={{
+                position: "relative",
+                flex: 1,
+                height: 6,
+                borderRadius: 3,
+                background: "var(--panel)",
+                overflow: "hidden",
+                border: "1px solid var(--line)",
+              }}
+              aria-label={`Checking ${dupProgress.checked} of ${dupProgress.total}`}
+            >
+              <div
+                style={{
+                  width: `${
+                    dupProgress.total === 0
+                      ? 0
+                      : Math.min(100, (dupProgress.checked / dupProgress.total) * 100)
+                  }%`,
+                  height: "100%",
+                  background: "var(--terracotta)",
+                  transition: "width 200ms",
+                }}
+              />
+            </div>
+            <span
+              style={{
+                fontSize: 11.5,
+                color: "var(--ink-soft)",
+                fontFamily: "JetBrains Mono, monospace",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+              title={dupProgress.recipient}
+            >
+              {dupProgress.checked} / {dupProgress.total}
+              {dupProgress.recipient ? ` · ${dupProgress.recipient}` : ""}
+            </span>
+          </div>
+        )}
         <button
           onClick={exportLog}
           disabled={exporting || logEntries.length === 0}

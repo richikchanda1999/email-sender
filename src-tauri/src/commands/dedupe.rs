@@ -9,7 +9,7 @@ use crate::oauth::flow;
 use crate::state::AppState;
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Deserialize)]
 pub struct CheckRow {
@@ -32,6 +32,20 @@ pub struct CheckArgs {
     /// per-row pre-send checks where local history is authoritative enough).
     #[serde(default)]
     pub skip_gmail: bool,
+    /// Frontend-provided id used to scope progress events back to a single
+    /// in-flight check. If empty, no progress events are emitted.
+    #[serde(default)]
+    pub check_id: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DupcheckProgress {
+    pub check_id: String,
+    pub checked: usize,
+    pub total: usize,
+    pub row_index: usize,
+    pub recipient: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,8 +90,11 @@ pub async fn check_duplicates(
         }
     };
 
-    for row in &args.rows {
+    let total = args.rows.len();
+    for (idx, row) in args.rows.iter().enumerate() {
         if row.recipient.trim().is_empty() {
+            // Still emit progress so the UI advances past empty rows.
+            emit_progress(&app, &args.check_id, idx + 1, total, row);
             continue;
         }
         let template_h = template_hash(&row.subject_template, &row.body_template);
@@ -165,6 +182,8 @@ pub async fn check_duplicates(
                 }
             }
         }
+
+        emit_progress(&app, &args.check_id, idx + 1, total, row);
     }
 
     Ok(CheckResult {
@@ -172,4 +191,20 @@ pub async fn check_duplicates(
         checked_rows: args.rows.len(),
         errors,
     })
+}
+
+fn emit_progress(app: &AppHandle, check_id: &str, checked: usize, total: usize, row: &CheckRow) {
+    if check_id.is_empty() {
+        return;
+    }
+    let _ = app.emit(
+        "dupcheck_progress",
+        DupcheckProgress {
+            check_id: check_id.to_string(),
+            checked,
+            total,
+            row_index: row.row_index,
+            recipient: row.recipient.clone(),
+        },
+    );
 }
