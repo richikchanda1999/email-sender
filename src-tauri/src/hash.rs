@@ -40,6 +40,15 @@ pub fn body_hash(html: &str) -> String {
     sha256_hex(normalize_body(html).as_bytes())
 }
 
+/// Fingerprint of the raw, un-substituted template so a re-send catches
+/// duplicates even when a variable like {{Today}} resolves differently.
+/// Subject + body share one hash so a subject edit still counts as new.
+pub fn template_hash(subject_template: &str, body_template: &str) -> String {
+    let s: String = subject_template.split_whitespace().collect::<Vec<_>>().join(" ");
+    let b = normalize_body(body_template);
+    sha256_hex(format!("{}\n\n{}", s, b).as_bytes())
+}
+
 /// Build a stable fingerprint of an attachment set from local filesystem paths.
 /// For each file we record (basename_lowercase, size_bytes). Returns the hex digest
 /// of the sorted, newline-joined fingerprints.

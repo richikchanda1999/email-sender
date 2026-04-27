@@ -33,6 +33,13 @@ fn open_conn(app: &AppHandle) -> Result<Connection> {
          CREATE INDEX IF NOT EXISTS idx_sent_at ON sent(sent_at);",
     )
     .map_err(|e| AppError::Io(format!("init schema: {}", e)))?;
+    // Best-effort migration for installs that pre-date the template_hash column.
+    // SQLite errors with "duplicate column name" once the column already exists; ignore.
+    let _ = conn.execute("ALTER TABLE sent ADD COLUMN template_hash TEXT", []);
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sent_template ON sent(recipient_email, template_hash, attachments_hash)",
+        [],
+    );
     Ok(conn)
 }
 
@@ -42,6 +49,7 @@ pub struct NewSend<'a> {
     pub recipient_email: &'a str,
     pub subject: &'a str,
     pub body_hash: &'a str,
+    pub template_hash: &'a str,
     pub attachments_hash: &'a str,
     pub attachments: &'a [String],
     pub gmail_message_id: &'a str,
@@ -53,14 +61,15 @@ pub fn record_sent(app: &AppHandle, rec: NewSend) -> Result<()> {
         serde_json::to_string(rec.attachments).unwrap_or_else(|_| "[]".to_string());
     conn.execute(
         "INSERT INTO sent (sent_at, sender_email, recipient_email, subject,
-                           body_hash, attachments_hash, attachments_json, gmail_message_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                           body_hash, template_hash, attachments_hash, attachments_json, gmail_message_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             rec.sent_at,
             rec.sender_email,
             rec.recipient_email,
             rec.subject,
             rec.body_hash,
+            rec.template_hash,
             rec.attachments_hash,
             attachments_json,
             rec.gmail_message_id,
@@ -77,12 +86,13 @@ pub struct Match {
     pub gmail_message_id: String,
 }
 
-/// Find prior local sends to `recipient_email` with matching body + attachments,
-/// within the lookback window. `since_iso` should be an ISO-8601 date-time string.
-pub fn find_local_matches(
+/// Find prior local sends keyed on the *raw template* hash so that a re-send
+/// catches duplicates even when a token like {{Today}} resolves differently.
+/// Pre-migration rows have template_hash = NULL and never match.
+pub fn find_local_matches_by_template(
     app: &AppHandle,
     recipient_email: &str,
-    body_hash: &str,
+    template_hash: &str,
     attachments_hash: &str,
     since_iso: &str,
 ) -> Result<Vec<Match>> {
@@ -92,7 +102,7 @@ pub fn find_local_matches(
             "SELECT sent_at, subject, gmail_message_id
              FROM sent
              WHERE recipient_email = ?1
-               AND body_hash = ?2
+               AND template_hash = ?2
                AND attachments_hash = ?3
                AND sent_at >= ?4
              ORDER BY sent_at DESC",
@@ -100,7 +110,7 @@ pub fn find_local_matches(
         .map_err(|e| AppError::Io(format!("prepare: {}", e)))?;
     let rows = stmt
         .query_map(
-            params![recipient_email, body_hash, attachments_hash, since_iso],
+            params![recipient_email, template_hash, attachments_hash, since_iso],
             |row| {
                 Ok(Match {
                     sent_at: row.get(0)?,

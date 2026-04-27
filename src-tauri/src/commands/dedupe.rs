@@ -1,8 +1,8 @@
 use crate::error::Result;
 use crate::gmail::history as gmail_history;
 use crate::hash::{
-    attachments_hash_from_paths, attachments_hash_from_pairs, body_hash, normalize_body,
-    sha256_hex,
+    attachments_hash_from_paths, attachments_hash_from_pairs, normalize_body, sha256_hex,
+    template_hash,
 };
 use crate::history;
 use crate::oauth::flow;
@@ -16,6 +16,10 @@ pub struct CheckRow {
     pub row_index: usize,
     pub recipient: String,
     pub body_html: String,
+    #[serde(default)]
+    pub subject_template: String,
+    #[serde(default)]
+    pub body_template: String,
     #[serde(default)]
     pub attachments: Vec<String>,
 }
@@ -76,7 +80,7 @@ pub async fn check_duplicates(
         if row.recipient.trim().is_empty() {
             continue;
         }
-        let body_h = body_hash(&row.body_html);
+        let template_h = template_hash(&row.subject_template, &row.body_template);
         let attach_h = match attachments_hash_from_paths(&row.attachments) {
             Ok(h) => h,
             Err(e) => {
@@ -90,11 +94,11 @@ pub async fn check_duplicates(
             }
         };
 
-        // --- Local DB check ---
-        match history::find_local_matches(
+        // --- Local DB check (template-based) ---
+        match history::find_local_matches_by_template(
             &app,
             &row.recipient,
-            &body_h,
+            &template_h,
             &attach_h,
             &since_iso,
         ) {

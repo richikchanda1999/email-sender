@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::gmail;
-use crate::hash::{attachments_hash_from_paths, body_hash};
+use crate::hash::{attachments_hash_from_paths, body_hash, template_hash};
 use crate::history;
 use crate::oauth::flow;
 use crate::state::AppState;
@@ -17,6 +17,12 @@ pub struct SendOneArgs {
     pub subject: String,
     /// HTML body (already token-resolved on the frontend).
     pub body_html: String,
+    /// Raw subject template before token substitution; used for template-based dedup.
+    #[serde(default)]
+    pub subject_template: String,
+    /// Raw body template before token substitution; used for template-based dedup.
+    #[serde(default)]
+    pub body_template: String,
     #[serde(default)]
     pub attachments: Vec<String>,
 }
@@ -61,6 +67,7 @@ pub async fn send_one(
 
     // Log to local history for future dedup checks. Best-effort; don't fail the send.
     let bh = body_hash(&args.body_html);
+    let th = template_hash(&args.subject_template, &args.body_template);
     let ah = attachments_hash_from_paths(&args.attachments).unwrap_or_default();
     let sent_at = Utc::now().to_rfc3339();
     if let Err(e) = history::record_sent(
@@ -71,6 +78,7 @@ pub async fn send_one(
             recipient_email: &args.to_email,
             subject: &args.subject,
             body_hash: &bh,
+            template_hash: &th,
             attachments_hash: &ah,
             attachments: &args.attachments,
             gmail_message_id: &id,

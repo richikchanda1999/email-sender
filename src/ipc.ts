@@ -89,6 +89,8 @@ export const ipc = {
     cc: string[];
     subject: string;
     bodyHtml: string;
+    subjectTemplate: string;
+    bodyTemplate: string;
     attachments: string[];
   }): Promise<{ messageId: string; threadId: string }> => {
     const raw = await invoke<{ gmail_message_id: string; thread_id: string }>(
@@ -100,6 +102,8 @@ export const ipc = {
           cc: args.cc,
           subject: args.subject,
           body_html: args.bodyHtml,
+          subject_template: args.subjectTemplate,
+          body_template: args.bodyTemplate,
           attachments: args.attachments,
         },
       }
@@ -112,6 +116,8 @@ export const ipc = {
       rowIndex: number;
       recipient: string;
       bodyHtml: string;
+      subjectTemplate: string;
+      bodyTemplate: string;
       attachments: string[];
     }[];
     lookbackDays: number;
@@ -131,6 +137,8 @@ export const ipc = {
           row_index: r.rowIndex,
           recipient: r.recipient,
           body_html: r.bodyHtml,
+          subject_template: r.subjectTemplate,
+          body_template: r.bodyTemplate,
           attachments: r.attachments,
         })),
         lookback_days: args.lookbackDays,

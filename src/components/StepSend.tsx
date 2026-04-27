@@ -263,7 +263,16 @@ export function StepSend({
     (async () => {
       try {
         const result = await ipc.checkDuplicates({
-          rows: [{ rowIndex: i, recipient: toEmail, bodyHtml, attachments }],
+          rows: [
+            {
+              rowIndex: i,
+              recipient: toEmail,
+              bodyHtml,
+              subjectTemplate: subject,
+              bodyTemplate: template,
+              attachments,
+            },
+          ],
           lookbackDays: 90,
           skipGmail: true,
         });
@@ -324,6 +333,8 @@ export function StepSend({
         cc,
         subject: resolvedSubject,
         bodyHtml: resolvedBodyHtml,
+        subjectTemplate: subject,
+        bodyTemplate: template,
         attachments,
       });
       const newStatus = status.map((v, j) => (j === i ? "sent" : v)) as RowStatus[];
@@ -413,7 +424,14 @@ export function StepSend({
           if (!toEmail.trim()) return null;
           const bodyHtml = resolveTokensHtml(template, rec);
           const attachments = buildAttachments(i);
-          return { rowIndex: i, recipient: toEmail, bodyHtml, attachments };
+          return {
+            rowIndex: i,
+            recipient: toEmail,
+            bodyHtml,
+            subjectTemplate: subject,
+            bodyTemplate: template,
+            attachments,
+          };
         })
         .filter((x): x is NonNullable<typeof x> => !!x);
       const result = await ipc.checkDuplicates({ rows: rowsPayload, lookbackDays: 90 });
