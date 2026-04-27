@@ -145,6 +145,7 @@ export function StepSend({
   const [searchText, setSearchText] = React.useState("");
   const [perRowDupe, setPerRowDupe] = React.useState<DuplicateHit[] | null>(null);
   const [perRowDupeChecking, setPerRowDupeChecking] = React.useState(false);
+  const [lastClickedIdx, setLastClickedIdx] = React.useState<number | null>(null);
 
   const attachmentsConfigured = resolved.length > 0;
   const hasAttachment = React.useCallback(
@@ -401,6 +402,86 @@ export function StepSend({
     setStatus((s) => s.map((v, j) => (j === i ? "pending" : v)) as RowStatus[]);
   };
 
+  // --- Bulk select helpers ---
+  // A row is "eligible" for bulk include/skip when it hasn't been sent and isn't
+  // failed/blocked. We deliberately don't clobber sent/failed/blocked via bulk ops.
+  const isEligible = (st: RowStatus) => st === "pending" || st === "skipped";
+
+  const applyBulkStatus = (indices: number[], target: RowStatus) => {
+    if (indices.length === 0) return;
+    const set = new Set(indices);
+    let changed: number[] = [];
+    setStatus((s) => {
+      const next = s.map((v, j) => {
+        if (!set.has(j)) return v;
+        if (!isEligible(v)) return v;
+        if (v === target) return v;
+        changed.push(j);
+        return target;
+      }) as RowStatus[];
+      return next;
+    });
+    // Only log terminal statuses; "pending" is the implicit default and isn't
+    // a LogEntry status (the type bars it).
+    if (target === "pending") return;
+    const ts = new Date().toISOString();
+    for (const j of changed) {
+      const meta = rowMetas[j];
+      if (!meta) continue;
+      appendLog({
+        rowIndex: j,
+        recipient: meta.record[emailColumn] ?? "",
+        subject: resolve(subject, meta.record),
+        status: target,
+        timestamp: ts,
+      });
+    }
+  };
+
+  const toggleSelected = (i: number, shift: boolean) => {
+    const cur = status[i];
+    if (!isEligible(cur)) return;
+    const target: RowStatus = cur === "pending" ? "skipped" : "pending";
+    let indices: number[] = [i];
+    if (shift && lastClickedIdx !== null && lastClickedIdx !== i) {
+      const visibleIdx = filteredRows.map((x) => x.i);
+      const a = visibleIdx.indexOf(lastClickedIdx);
+      const b = visibleIdx.indexOf(i);
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        indices = visibleIdx.slice(lo, hi + 1);
+      }
+    }
+    applyBulkStatus(indices, target);
+    setLastClickedIdx(i);
+  };
+
+  const filteredEligibleIndices = React.useMemo(
+    () => filteredRows.filter(({ i }) => isEligible(status[i] ?? "pending")).map(({ i }) => i),
+    [filteredRows, status]
+  );
+
+  // Header tristate: checked if every eligible filtered row is pending,
+  // unchecked if every eligible filtered row is skipped, indeterminate otherwise.
+  const headerCheckState: "checked" | "unchecked" | "indeterminate" | "empty" =
+    filteredEligibleIndices.length === 0
+      ? "empty"
+      : filteredEligibleIndices.every((j) => status[j] === "pending")
+      ? "checked"
+      : filteredEligibleIndices.every((j) => status[j] === "skipped")
+      ? "unchecked"
+      : "indeterminate";
+
+  const toggleAllFiltered = () => {
+    if (filteredEligibleIndices.length === 0) return;
+    // Mixed or fully-checked → skip everything; fully-unchecked → include everything.
+    const target: RowStatus = headerCheckState === "checked" ? "skipped" : "pending";
+    applyBulkStatus(filteredEligibleIndices, target);
+  };
+
+  const skipFiltered = () => applyBulkStatus(filteredEligibleIndices, "skipped");
+  const includeFiltered = () => applyBulkStatus(filteredEligibleIndices, "pending");
+
   const retryRow = (i: number) => {
     setErrors((e) => {
       const { [i]: _drop, ...rest } = e;
@@ -630,6 +711,32 @@ export function StepSend({
           ))}
         </div>
         <span style={{ flex: 1 }} />
+        <button
+          onClick={includeFiltered}
+          disabled={filteredEligibleIndices.length === 0}
+          title="Mark every eligible row in the current filter as pending"
+          style={{
+            ...ghostBtn(),
+            opacity: filteredEligibleIndices.length === 0 ? 0.4 : 1,
+            padding: "5px 11px",
+            fontSize: 11.5,
+          }}
+        >
+          Include filtered
+        </button>
+        <button
+          onClick={skipFiltered}
+          disabled={filteredEligibleIndices.length === 0}
+          title="Skip every eligible row in the current filter"
+          style={{
+            ...ghostBtn(),
+            opacity: filteredEligibleIndices.length === 0 ? 0.4 : 1,
+            padding: "5px 11px",
+            fontSize: 11.5,
+          }}
+        >
+          Skip filtered
+        </button>
         <input
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
@@ -663,7 +770,7 @@ export function StepSend({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "24px 1.2fr 1.4fr 1fr 160px",
+            gridTemplateColumns: "32px 24px 1.2fr 1.4fr 1fr 160px",
             padding: "10px 16px",
             background: "var(--panel)",
             fontSize: 11,
@@ -674,8 +781,26 @@ export function StepSend({
             position: "sticky",
             top: 0,
             zIndex: 1,
+            alignItems: "center",
           }}
         >
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              ref={(el) => {
+                if (el) el.indeterminate = headerCheckState === "indeterminate";
+              }}
+              checked={headerCheckState === "checked"}
+              disabled={headerCheckState === "empty"}
+              onChange={toggleAllFiltered}
+              title={
+                headerCheckState === "checked"
+                  ? "Deselect all visible rows"
+                  : "Select all visible rows"
+              }
+              style={{ cursor: headerCheckState === "empty" ? "default" : "pointer" }}
+            />
+          </div>
           <div></div>
           <div>Recipient</div>
           <div>Subject</div>
@@ -693,12 +818,13 @@ export function StepSend({
           const dup = sameAddressInfo(i);
           const rec = r.record;
           const perRowAttached = resolved[i]?.matchedPath ? 1 : 0;
+          const eligible = isEligible(st);
           return (
             <div
               key={i}
               style={{
                 display: "grid",
-                gridTemplateColumns: "24px 1.2fr 1.4fr 1fr 160px",
+                gridTemplateColumns: "32px 24px 1.2fr 1.4fr 1fr 160px",
                 padding: "12px 16px",
                 alignItems: "center",
                 borderBottom: i === rowMetas.length - 1 ? "none" : "1px solid var(--line)",
@@ -707,6 +833,29 @@ export function StepSend({
                 opacity: st === "blocked" ? 0.75 : 1,
               }}
             >
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={st === "pending"}
+                  disabled={!eligible}
+                  onClick={(e) => {
+                    if (!eligible) return;
+                    e.stopPropagation();
+                    toggleSelected(i, (e as unknown as React.MouseEvent).shiftKey);
+                  }}
+                  onChange={() => {
+                    /* state is driven by onClick to capture shiftKey */
+                  }}
+                  title={
+                    !eligible
+                      ? `${st} — not eligible`
+                      : st === "pending"
+                      ? "Skip this row (shift-click to range-select)"
+                      : "Include this row (shift-click to range-select)"
+                  }
+                  style={{ cursor: eligible ? "pointer" : "default" }}
+                />
+              </div>
               <div style={{ color: "var(--ink-soft)", fontFamily: "JetBrains Mono, monospace", fontSize: 10.5 }}>{i + 1}</div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ color: "var(--ink)", fontWeight: 500, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
