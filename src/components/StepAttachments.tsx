@@ -227,7 +227,6 @@ export function StepAttachments({
           <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
             <Toggle checked={rules.caseInsensitive} onChange={(v) => setRules((r) => ({ ...r, caseInsensitive: v }))} label="Case-insensitive" />
             <Toggle checked={rules.fuzzy} onChange={(v) => setRules((r) => ({ ...r, fuzzy: v }))} label="Ignore spaces & dashes" />
-            <Toggle checked={rules.required} onChange={(v) => setRules((r) => ({ ...r, required: v }))} label="Skip row if missing" />
           </div>
         </Row>
 

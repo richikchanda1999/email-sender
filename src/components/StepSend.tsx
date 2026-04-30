@@ -29,6 +29,12 @@ type DupcheckProgressPayload = {
   recipient: string;
 };
 
+// Marker stored in `errors[i]` so the re-sync effect can distinguish a user-skipped
+// row (no error / different error) from a row auto-skipped because its per-row
+// attachment is missing. When the file later appears, we flip auto-skipped rows
+// back to "pending"; user-skipped rows are left alone.
+const AUTO_SKIP_MSG = "per-row attachment required but missing";
+
 type RowMeta = {
   record: Record<string, string>;
   emailColumn: string;
@@ -199,6 +205,36 @@ export function StepSend({
     }
   }, [rowMetas.length, status.length, setStatus, setErrors]);
 
+  // Reconcile row status against per-row attachment availability. When attachments
+  // are configured, rows without a matched file get auto-skipped; if the file
+  // later appears (user dropped it into the folder), the row flips back to
+  // pending. Sent/failed/blocked rows are untouched. User-skipped rows (no
+  // AUTO_SKIP_MSG marker) are also left alone.
+  React.useEffect(() => {
+    if (status.length !== rowMetas.length) return;
+    let changed = false;
+    const nextStatus = status.slice() as RowStatus[];
+    const nextErrors = { ...errors };
+    for (let i = 0; i < rowMetas.length; i++) {
+      const cur = status[i];
+      const isAutoSkip = cur === "skipped" && errors[i] === AUTO_SKIP_MSG;
+      const has = !!resolved[i]?.matchedPath;
+      if (attachmentsConfigured && cur === "pending" && !has) {
+        nextStatus[i] = "skipped";
+        nextErrors[i] = AUTO_SKIP_MSG;
+        changed = true;
+      } else if (isAutoSkip && (has || !attachmentsConfigured)) {
+        nextStatus[i] = "pending";
+        delete nextErrors[i];
+        changed = true;
+      }
+    }
+    if (changed) {
+      setStatus(nextStatus);
+      setErrors(nextErrors);
+    }
+  }, [resolved, attachmentsConfigured, rowMetas.length, status, errors, setStatus, setErrors]);
+
   const resolve = (t: string, row: Record<string, string>) => resolveTokens(t, row);
   const findNextPending = React.useCallback(
     (s: RowStatus[]) => {
@@ -319,11 +355,11 @@ export function StepSend({
     const resolvedSubject = resolve(subject, record);
     const resolvedBodyHtml = resolveTokensHtml(template, record);
     const attachments = buildAttachments(i);
-    const perRowRequired = rules.required;
+    const perRowRequired = attachmentsConfigured;
     const perRowMissing = !resolved[i]?.matchedPath;
 
     if (perRowRequired && perRowMissing) {
-      const msg = "per-row attachment required but missing";
+      const msg = AUTO_SKIP_MSG;
       setStatus((s) => s.map((v, j) => (j === i ? "skipped" : v)) as RowStatus[]);
       setErrors((e) => ({ ...e, [i]: msg }));
       appendLog({
