@@ -33,6 +33,13 @@ export type ResolvedAttachment = {
   note?: string | null;
 };
 
+export type UnmatchedFile = { name: string; path: string };
+
+export type ResolveResult = {
+  rows: ResolvedAttachment[];
+  unmatchedFiles: UnmatchedFile[];
+};
+
 export type LogEntry = {
   rowIndex: number;
   recipient: string;

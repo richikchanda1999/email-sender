@@ -5,7 +5,7 @@ import type {
   DuplicateHit,
   GoogleUser,
   LogEntry,
-  ResolvedAttachment,
+  ResolveResult,
   SessionDoc,
   SessionMeta,
   Sheet,
@@ -40,6 +40,13 @@ type RawResolvedAttachment = {
   note?: string | null;
 };
 
+type RawUnmatchedFile = { name: string; path: string };
+
+type RawResolveResult = {
+  rows: RawResolvedAttachment[];
+  unmatched_files: RawUnmatchedFile[];
+};
+
 export const ipc = {
   configStatus: () => invoke<ConfigStatus>("config_status"),
 
@@ -63,20 +70,26 @@ export const ipc = {
     rows: Record<string, string>[];
     caseInsensitive: boolean;
     fuzzy: boolean;
-  }): Promise<ResolvedAttachment[]> => {
-    const raw = await invoke<RawResolvedAttachment[]>("resolve_attachments", {
+  }): Promise<ResolveResult> => {
+    const raw = await invoke<RawResolveResult>("resolve_attachments", {
       folder: args.folder,
       pattern: args.pattern,
       rows: args.rows,
       caseInsensitive: args.caseInsensitive,
       fuzzy: args.fuzzy,
     });
-    return raw.map((r) => ({
-      rowIndex: r.row_index,
-      resolvedName: r.resolved_name,
-      matchedPath: r.matched_path,
-      note: r.note ?? null,
-    }));
+    return {
+      rows: raw.rows.map((r) => ({
+        rowIndex: r.row_index,
+        resolvedName: r.resolved_name,
+        matchedPath: r.matched_path,
+        note: r.note ?? null,
+      })),
+      unmatchedFiles: raw.unmatched_files.map((f) => ({
+        name: f.name,
+        path: f.path,
+      })),
+    };
   },
 
   startGoogleAuth: () => invoke<GoogleUser>("start_google_auth"),
