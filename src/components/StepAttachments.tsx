@@ -1,5 +1,5 @@
 import React from "react";
-import { Sheet, Rules, FixedFile, ResolvedAttachment, rowRecord } from "../data";
+import { Sheet, Rules, FixedFile, ResolvedAttachment, UnmatchedFile, rowRecord } from "../data";
 import { StepShell, Pill, ghostBtn, linkBtn } from "../primitives";
 import { IconFolder, IconPlus, IconX, IconCheck } from "../icons";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -32,6 +32,7 @@ export function StepAttachments({
   const [error, setError] = React.useState<string | null>(null);
   const [running, setRunning] = React.useState(false);
   const [showMissingOnly, setShowMissingOnly] = React.useState(false);
+  const [unmatched, setUnmatched] = React.useState<UnmatchedFile[]>([]);
   const patternInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const insertTokenAtCursor = (k: string) => {
@@ -93,6 +94,7 @@ export function StepAttachments({
   React.useEffect(() => {
     if (!folder || !sheet || rows.length === 0 || !rules.pattern) {
       setResolved([]);
+      setUnmatched([]);
       return;
     }
     const id = setTimeout(async () => {
@@ -106,10 +108,12 @@ export function StepAttachments({
           caseInsensitive: rules.caseInsensitive,
           fuzzy: rules.fuzzy,
         });
-        setResolved(r);
+        setResolved(r.rows);
+        setUnmatched(r.unmatchedFiles);
       } catch (e: any) {
         setError(typeof e === "string" ? e : e?.message ?? "matching failed");
         setResolved([]);
+        setUnmatched([]);
       } finally {
         setRunning(false);
       }
@@ -358,6 +362,82 @@ export function StepAttachments({
             </div>
           </div>
         </div>
+
+        {folder && (
+          <div style={{ marginTop: 18 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1, color: "var(--ink-dim)" }}>
+                Files in folder that didn't match · {unmatched.length}
+              </div>
+            </div>
+            <div
+              style={{
+                border: "1px solid var(--line)",
+                borderRadius: 10,
+                overflow: "hidden",
+                background: "var(--bg)",
+              }}
+            >
+              {unmatched.length === 0 ? (
+                <div
+                  style={{
+                    padding: "14px 16px",
+                    fontSize: 12.5,
+                    color: "var(--ink-soft)",
+                    fontStyle: "italic",
+                  }}
+                >
+                  Every file in the folder matched a row.
+                </div>
+              ) : (
+                <div style={{ maxHeight: cozy ? 320 : 260, overflow: "auto" }}>
+                  {unmatched.map((f, displayIdx) => (
+                    <div
+                      key={f.path}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(200px, 1.2fr) minmax(200px, 2fr)",
+                        alignItems: "center",
+                        padding: "10px 12px",
+                        borderBottom:
+                          displayIdx === unmatched.length - 1 ? "none" : "1px solid var(--line)",
+                        fontSize: 12.5,
+                        background: displayIdx % 2 ? "var(--panel-soft)" : "transparent",
+                      }}
+                    >
+                      <div
+                        title={f.name}
+                        style={{
+                          color: "var(--ink)",
+                          fontFamily: "JetBrains Mono, monospace",
+                          fontSize: 11.5,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {f.name}
+                      </div>
+                      <div
+                        title={f.path}
+                        style={{
+                          color: "var(--ink-soft)",
+                          fontFamily: "JetBrains Mono, monospace",
+                          fontSize: 10.5,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {f.path}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </SectionCard>
 
       <SectionCard title="Fixed attachments" num="B" sub="Sent with every email in this campaign.">
