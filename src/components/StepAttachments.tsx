@@ -107,6 +107,10 @@ export function StepAttachments({
           rows,
           caseInsensitive: rules.caseInsensitive,
           fuzzy: rules.fuzzy,
+          workbookPath: sheet.path,
+          otherSheetNames: sheet.availableSheets.filter(
+            (n) => n !== sheet.sheetName
+          ),
         });
         setResolved(r.rows);
         setUnmatched(r.unmatchedFiles);
@@ -395,8 +399,10 @@ export function StepAttachments({
                       key={f.path}
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "minmax(200px, 1.2fr) minmax(200px, 2fr)",
+                        gridTemplateColumns:
+                          "minmax(180px, 1fr) minmax(180px, 1.6fr) minmax(140px, 0.8fr)",
                         alignItems: "center",
+                        gap: 12,
                         padding: "10px 12px",
                         borderBottom:
                           displayIdx === unmatched.length - 1 ? "none" : "1px solid var(--line)",
@@ -429,6 +435,34 @@ export function StepAttachments({
                         }}
                       >
                         {f.path}
+                      </div>
+                      <div
+                        style={{
+                          minWidth: 0,
+                          display: "flex",
+                          justifyContent: "flex-end",
+                        }}
+                      >
+                        {f.matchedSheet && (
+                          <span
+                            title={`This file matches a row in sheet "${f.matchedSheet}"`}
+                            style={{
+                              fontSize: 10.5,
+                              fontFamily: "JetBrains Mono, monospace",
+                              color: "var(--terracotta)",
+                              background: "rgba(196,98,63,0.08)",
+                              border: "1px solid rgba(196,98,63,0.35)",
+                              borderRadius: 4,
+                              padding: "2px 8px",
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              maxWidth: "100%",
+                            }}
+                          >
+                            Matches in: {f.matchedSheet}
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}

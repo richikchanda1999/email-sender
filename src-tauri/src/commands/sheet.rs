@@ -1,6 +1,7 @@
 use crate::error::{AppError, Result};
 use calamine::{open_workbook_auto, Data, Reader};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
@@ -118,4 +119,58 @@ pub async fn load_spreadsheet(path: String, sheet_name: Option<String>) -> Resul
         columns,
         rows,
     })
+}
+
+/// Read a single sheet from a workbook and return one HashMap<column, value>
+/// per data row. Used by the cross-sheet attachment matcher to scan other
+/// sheets in the workbook without going through the full `load_spreadsheet`
+/// + Tauri serialization path.
+pub fn read_rows_as_records(
+    path: &str,
+    sheet_name: &str,
+) -> Result<Vec<HashMap<String, String>>> {
+    let p = Path::new(path);
+    if !p.exists() {
+        return Err(AppError::Spreadsheet(format!("file not found: {}", path)));
+    }
+    let mut workbook = open_workbook_auto(p)
+        .map_err(|e| AppError::Spreadsheet(format!("open: {}", e)))?;
+    let range = workbook
+        .worksheet_range(sheet_name)
+        .map_err(|e| AppError::Spreadsheet(format!("reading {}: {}", sheet_name, e)))?;
+
+    let mut iter = range.rows();
+    let header_row = match iter.next() {
+        Some(r) => r,
+        None => return Ok(Vec::new()),
+    };
+    let mut columns: Vec<String> = header_row.iter().map(cell_to_string).collect();
+    while columns.last().map(|s| s.trim().is_empty()).unwrap_or(false) {
+        columns.pop();
+    }
+    for c in columns.iter_mut() {
+        *c = c.trim().to_string();
+    }
+    if columns.is_empty() || columns.iter().any(|c| c.is_empty()) {
+        // Malformed header — treat as no rows; the caller (attachments matcher)
+        // logs and continues.
+        return Ok(Vec::new());
+    }
+
+    let col_count = columns.len();
+    let mut out: Vec<HashMap<String, String>> = Vec::new();
+    for row in iter {
+        let values: Vec<String> = (0..col_count)
+            .map(|i| row.get(i).map(cell_to_string).unwrap_or_default())
+            .collect();
+        if values.iter().all(|v| v.trim().is_empty()) {
+            continue;
+        }
+        let mut rec: HashMap<String, String> = HashMap::with_capacity(col_count);
+        for (i, c) in columns.iter().enumerate() {
+            rec.insert(c.clone(), values[i].clone());
+        }
+        out.push(rec);
+    }
+    Ok(out)
 }
