@@ -166,6 +166,12 @@ export function StepSend({
     recipient: string;
   } | null>(null);
   const [lastClickedIdx, setLastClickedIdx] = React.useState<number | null>(null);
+  // Rows whose send-error banner the user has dismissed. Rows are removed from
+  // this set when their error is cleared (retry / skip), so a later failure of
+  // the same row will surface again.
+  const [dismissedSendErrorRows, setDismissedSendErrorRows] = React.useState<Set<number>>(
+    () => new Set()
+  );
 
   const attachmentsConfigured = resolved.length > 0;
   const hasAttachment = React.useCallback(
@@ -246,6 +252,41 @@ export function StepSend({
     },
     [deferMissing, attachmentsConfigured, hasAttachment]
   );
+
+  // Visible send errors for the top-of-step banner: rows whose status is "failed"
+  // and whose row index hasn't been dismissed. The auto-skip marker (a row that
+  // was *not* sent because its per-row attachment was missing) is recorded on
+  // skipped rows, so it's already filtered out by the status check.
+  const visibleSendErrors = React.useMemo(() => {
+    const out: { rowIndex: number; recipient: string; message: string }[] = [];
+    for (let i = 0; i < rowMetas.length; i++) {
+      if (status[i] !== "failed") continue;
+      const msg = errors[i];
+      if (!msg) continue;
+      if (dismissedSendErrorRows.has(i)) continue;
+      out.push({
+        rowIndex: i,
+        recipient: rowMetas[i].record[emailColumn] ?? "",
+        message: msg,
+      });
+    }
+    return out;
+  }, [rowMetas, status, errors, dismissedSendErrorRows, emailColumn]);
+
+  // Drop dismissed entries once the underlying error is gone (retry/skip), so
+  // a fresh failure on the same row surfaces in the banner again.
+  React.useEffect(() => {
+    if (dismissedSendErrorRows.size === 0) return;
+    let changed = false;
+    const next = new Set(dismissedSendErrorRows);
+    for (const idx of dismissedSendErrorRows) {
+      if (status[idx] !== "failed" || !errors[idx]) {
+        next.delete(idx);
+        changed = true;
+      }
+    }
+    if (changed) setDismissedSendErrorRows(next);
+  }, [status, errors, dismissedSendErrorRows]);
 
   const heldCount = React.useMemo(
     () =>
@@ -422,8 +463,11 @@ export function StepSend({
         // Also clear the local user so the UI reflects the expired session
         setUser(null);
         setAuthState("idle");
+        // Auth banner takes over — close the modal as before so it's visible.
+        setCurrentIdx(null);
       }
-      setCurrentIdx(null);
+      // For non-auth errors we leave the modal open so the user can see the
+      // failure reason inline and choose to retry, skip, or pause from there.
     } finally {
       setSending(false);
     }
@@ -892,14 +936,18 @@ export function StepSend({
             <div
               key={i}
               style={{
-                display: "grid",
-                gridTemplateColumns: "32px 24px 1.2fr 1.4fr 1fr 160px",
-                padding: "12px 16px",
-                alignItems: "center",
                 borderBottom: i === rowMetas.length - 1 ? "none" : "1px solid var(--line)",
                 background: isCurrent ? "rgba(169,132,103,0.08)" : "transparent",
                 fontSize: 12.5,
                 opacity: st === "blocked" ? 0.75 : 1,
+              }}
+            >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "32px 24px 1.2fr 1.4fr 1fr 160px",
+                padding: "12px 16px",
+                alignItems: "center",
               }}
             >
               <div style={{ display: "flex", alignItems: "center" }}>
@@ -1030,6 +1078,25 @@ export function StepSend({
                 {st === "pending" && !isCurrent && <Pill tone="ink">queued</Pill>}
                 {isCurrent && <Pill tone="sand">reviewing</Pill>}
               </div>
+            </div>
+            {st === "failed" && errors[i] && (
+              <div
+                title={errors[i]}
+                style={{
+                  padding: "0 16px 10px 72px",
+                  color: "var(--terracotta)",
+                  fontSize: 11.5,
+                  lineHeight: 1.4,
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                  wordBreak: "break-word",
+                }}
+              >
+                {errors[i]}
+              </div>
+            )}
             </div>
           );
         })}
@@ -1220,6 +1287,57 @@ export function StepSend({
         </div>
       )}
 
+      {visibleSendErrors.length > 0 && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: "rgba(196,98,63,0.06)",
+            border: "1px dashed rgba(196,98,63,0.45)",
+            color: "var(--terracotta)",
+            fontSize: 11.5,
+            display: "flex",
+            gap: 12,
+            alignItems: "flex-start",
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              {visibleSendErrors.length === 1
+                ? "1 row failed to send"
+                : `${visibleSendErrors.length} rows failed to send`}
+            </div>
+            {visibleSendErrors.slice(0, 3).map((e) => (
+              <div
+                key={e.rowIndex}
+                style={{ marginTop: 2, wordBreak: "break-word", lineHeight: 1.4 }}
+              >
+                Row {e.rowIndex + 1}
+                {e.recipient ? ` (${e.recipient})` : ""}: {e.message}
+              </div>
+            ))}
+            {visibleSendErrors.length > 3 && (
+              <div style={{ marginTop: 4, color: "var(--ink-soft)" }}>
+                …and {visibleSendErrors.length - 3} more
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() =>
+              setDismissedSendErrorRows((prev) => {
+                const next = new Set(prev);
+                for (const e of visibleSendErrors) next.add(e.rowIndex);
+                return next;
+              })
+            }
+            style={linkBtn()}
+          >
+            clear
+          </button>
+        </div>
+      )}
+
       {(authExpired || !user) && (
         <div
           style={{
@@ -1267,6 +1385,9 @@ export function StepSend({
           sending={sending}
           dupeHits={perRowDupe}
           dupeChecking={perRowDupeChecking}
+          lastError={
+            status[currentIdx] === "failed" ? errors[currentIdx] ?? null : null
+          }
           onConfirm={confirmSend}
           onSkip={skipOne}
           onPause={() => {
@@ -1324,6 +1445,7 @@ function ConfirmModal({
   sending,
   dupeHits,
   dupeChecking,
+  lastError,
   onConfirm,
   onSkip,
   onPause,
@@ -1344,6 +1466,7 @@ function ConfirmModal({
   sending: boolean;
   dupeHits: DuplicateHit[] | null;
   dupeChecking: boolean;
+  lastError: string | null;
   onConfirm: () => void;
   onSkip: () => void;
   onPause: () => void;
@@ -1512,6 +1635,26 @@ function ConfirmModal({
               Checking history for duplicates…
             </div>
           )}
+          {lastError && !sending && (
+            <div
+              style={{
+                marginTop: 14,
+                padding: "10px 14px",
+                borderRadius: 8,
+                background: "rgba(196,98,63,0.06)",
+                border: "1px dashed rgba(196,98,63,0.45)",
+                color: "var(--terracotta)",
+                fontSize: 12,
+                lineHeight: 1.5,
+                wordBreak: "break-word",
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                Last attempt failed
+              </div>
+              <div>{lastError}</div>
+            </div>
+          )}
         </div>
 
         <div
@@ -1546,6 +1689,10 @@ function ConfirmModal({
             {sending ? (
               <>
                 <Spinner /> Sending…
+              </>
+            ) : lastError ? (
+              <>
+                <IconSend size={13} /> Try again
               </>
             ) : dupeHits && dupeHits.length > 0 ? (
               <>
