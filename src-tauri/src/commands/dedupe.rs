@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter};
 #[derive(Debug, Deserialize)]
 pub struct CheckRow {
     pub row_index: usize,
-    pub recipient: String,
+    pub recipients: Vec<String>,
     pub body_html: String,
     #[serde(default)]
     pub subject_template: String,
@@ -92,7 +92,13 @@ pub async fn check_duplicates(
 
     let total = args.rows.len();
     for (idx, row) in args.rows.iter().enumerate() {
-        if row.recipient.trim().is_empty() {
+        let recipients: Vec<&str> = row
+            .recipients
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if recipients.is_empty() {
             // Still emit progress so the UI advances past empty rows.
             emit_progress(&app, &args.check_id, idx + 1, total, row);
             continue;
@@ -111,74 +117,96 @@ pub async fn check_duplicates(
             }
         };
 
-        // --- Local DB check (template-based) ---
-        match history::find_local_matches_by_template(
-            &app,
-            &row.recipient,
-            &template_h,
-            &attach_h,
-            &since_iso,
-        ) {
-            Ok(ms) => {
-                for m in ms {
-                    hits.push(DuplicateHit {
-                        row_index: row.row_index,
-                        source: "local".into(),
-                        prior_sent_at: m.sent_at,
-                        prior_message_id: m.gmail_message_id,
-                        prior_subject: m.subject,
-                    });
-                }
-            }
-            Err(e) => errors.push(format!("row {}: local check: {}", row.row_index + 1, e)),
-        }
-
-        // --- Gmail API check ---
-        if let Some(token) = &access_token {
-            match gmail_history::list_sent_to(token, &row.recipient, since_epoch, 25).await {
-                Ok(ids) => {
-                    let target_body = normalize_body(&row.body_html);
-                    for id in ids {
-                        match gmail_history::fetch_message(token, &id).await {
-                            Ok(msg) => {
-                                // Skip if this exact message was logged locally (already reported).
-                                if hits
-                                    .iter()
-                                    .any(|h| h.prior_message_id == msg.id && h.row_index == row.row_index)
-                                {
-                                    continue;
-                                }
-                                let gmail_attach_h =
-                                    attachments_hash_from_pairs(&msg.attachments);
-                                if gmail_attach_h != attach_h {
-                                    continue;
-                                }
-                                let gmail_body_norm = if !msg.body_html.is_empty() {
-                                    normalize_body(&msg.body_html)
-                                } else {
-                                    normalize_body(&msg.body_plain)
-                                };
-                                if gmail_body_norm == target_body {
-                                    hits.push(DuplicateHit {
-                                        row_index: row.row_index,
-                                        source: "gmail".into(),
-                                        prior_sent_at: msg.date_iso,
-                                        prior_message_id: msg.id,
-                                        prior_subject: msg.subject,
-                                    });
-                                }
-                            }
-                            Err(e) => errors.push(format!(
-                                "row {}: fetch {}: {}",
-                                row.row_index + 1,
-                                id,
-                                e
-                            )),
+        for recipient in &recipients {
+            // --- Local DB check (template-based) ---
+            match history::find_local_matches_by_template(
+                &app,
+                recipient,
+                &template_h,
+                &attach_h,
+                &since_iso,
+            ) {
+                Ok(ms) => {
+                    for m in ms {
+                        // Avoid double-reporting the same prior message id when
+                        // multiple addresses on this row hit the same record.
+                        if hits.iter().any(|h| {
+                            h.row_index == row.row_index
+                                && h.prior_message_id == m.gmail_message_id
+                        }) {
+                            continue;
                         }
+                        hits.push(DuplicateHit {
+                            row_index: row.row_index,
+                            source: "local".into(),
+                            prior_sent_at: m.sent_at,
+                            prior_message_id: m.gmail_message_id,
+                            prior_subject: m.subject,
+                        });
                     }
                 }
-                Err(e) => {
-                    errors.push(format!("row {}: gmail list: {}", row.row_index + 1, e));
+                Err(e) => errors.push(format!(
+                    "row {} ({}): local check: {}",
+                    row.row_index + 1,
+                    recipient,
+                    e
+                )),
+            }
+
+            // --- Gmail API check ---
+            if let Some(token) = &access_token {
+                match gmail_history::list_sent_to(token, recipient, since_epoch, 25).await {
+                    Ok(ids) => {
+                        let target_body = normalize_body(&row.body_html);
+                        for id in ids {
+                            match gmail_history::fetch_message(token, &id).await {
+                                Ok(msg) => {
+                                    // Skip if this exact message was already logged for this row
+                                    // (either via local hit or a previous address on the same row).
+                                    if hits.iter().any(|h| {
+                                        h.prior_message_id == msg.id
+                                            && h.row_index == row.row_index
+                                    }) {
+                                        continue;
+                                    }
+                                    let gmail_attach_h =
+                                        attachments_hash_from_pairs(&msg.attachments);
+                                    if gmail_attach_h != attach_h {
+                                        continue;
+                                    }
+                                    let gmail_body_norm = if !msg.body_html.is_empty() {
+                                        normalize_body(&msg.body_html)
+                                    } else {
+                                        normalize_body(&msg.body_plain)
+                                    };
+                                    if gmail_body_norm == target_body {
+                                        hits.push(DuplicateHit {
+                                            row_index: row.row_index,
+                                            source: "gmail".into(),
+                                            prior_sent_at: msg.date_iso,
+                                            prior_message_id: msg.id,
+                                            prior_subject: msg.subject,
+                                        });
+                                    }
+                                }
+                                Err(e) => errors.push(format!(
+                                    "row {} ({}): fetch {}: {}",
+                                    row.row_index + 1,
+                                    recipient,
+                                    id,
+                                    e
+                                )),
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        errors.push(format!(
+                            "row {} ({}): gmail list: {}",
+                            row.row_index + 1,
+                            recipient,
+                            e
+                        ));
+                    }
                 }
             }
         }
@@ -197,6 +225,13 @@ fn emit_progress(app: &AppHandle, check_id: &str, checked: usize, total: usize, 
     if check_id.is_empty() {
         return;
     }
+    let recipient = row
+        .recipients
+        .iter()
+        .map(|s| s.trim())
+        .find(|s| !s.is_empty())
+        .unwrap_or("")
+        .to_string();
     let _ = app.emit(
         "dupcheck_progress",
         DupcheckProgress {
@@ -204,7 +239,7 @@ fn emit_progress(app: &AppHandle, check_id: &str, checked: usize, total: usize, 
             checked,
             total,
             row_index: row.row_index,
-            recipient: row.recipient.clone(),
+            recipient,
         },
     );
 }

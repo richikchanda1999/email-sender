@@ -33,7 +33,11 @@ export type ResolvedAttachment = {
   note?: string | null;
 };
 
-export type UnmatchedFile = { name: string; path: string };
+export type UnmatchedFile = {
+  name: string;
+  path: string;
+  matchedSheet: string | null;
+};
 
 export type ResolveResult = {
   rows: ResolvedAttachment[];
@@ -140,6 +144,18 @@ export function buildSmartDefaults(columns: string[]): {
     subject: "",
     pattern: `{{${nameColumn}}}.pdf`,
   };
+}
+
+// Splits an Email Address cell that may hold multiple recipients separated by
+// any of: , ; : / \ or whitespace. Permissive — no format validation; trim and
+// drop empty parts only. Malformed addresses propagate to the backend, which
+// returns a Gmail API error that the failure UI surfaces.
+const RECIPIENT_DELIM = /[,;:/\\\s]+/;
+export function splitRecipients(raw: string): string[] {
+  return (raw ?? "")
+    .split(RECIPIENT_DELIM)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 export function rowRecord(sheet: Sheet, idx: number): Record<string, string> {

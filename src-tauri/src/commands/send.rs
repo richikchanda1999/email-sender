@@ -10,7 +10,7 @@ use tauri::AppHandle;
 
 #[derive(Debug, Deserialize)]
 pub struct SendOneArgs {
-    pub to_email: String,
+    pub to_emails: Vec<String>,
     pub to_name: Option<String>,
     #[serde(default)]
     pub cc: Vec<String>,
@@ -46,12 +46,18 @@ pub async fn send_one(
     };
     let user = user.ok_or(crate::error::AppError::NotSignedIn)?;
 
+    if args.to_emails.is_empty() {
+        return Err(crate::error::AppError::Gmail(
+            "no recipient address".into(),
+        ));
+    }
+
     let body_text = gmail::mime::html_to_plain(&args.body_html);
 
     let mime_bytes = gmail::mime::build_mime(
         &user.email,
         Some(&user.name),
-        &args.to_email,
+        &args.to_emails,
         args.to_name.as_deref(),
         &args.cc,
         &args.subject,
@@ -65,26 +71,30 @@ pub async fn send_one(
     )?;
     let (id, thread_id) = gmail::send::send_raw(&token, &mime_bytes).await?;
 
-    // Log to local history for future dedup checks. Best-effort; don't fail the send.
+    // Log to local history for future dedup checks. Best-effort; don't fail the
+    // send. One row per recipient address so dupcheck can find a hit on any of
+    // them.
     let bh = body_hash(&args.body_html);
     let th = template_hash(&args.subject_template, &args.body_template);
     let ah = attachments_hash_from_paths(&args.attachments).unwrap_or_default();
     let sent_at = Utc::now().to_rfc3339();
-    if let Err(e) = history::record_sent(
-        &app,
-        history::NewSend {
-            sent_at: &sent_at,
-            sender_email: &user.email,
-            recipient_email: &args.to_email,
-            subject: &args.subject,
-            body_hash: &bh,
-            template_hash: &th,
-            attachments_hash: &ah,
-            attachments: &args.attachments,
-            gmail_message_id: &id,
-        },
-    ) {
-        tracing::warn!(error = %e, "could not record send to history db");
+    for recipient in &args.to_emails {
+        if let Err(e) = history::record_sent(
+            &app,
+            history::NewSend {
+                sent_at: &sent_at,
+                sender_email: &user.email,
+                recipient_email: recipient,
+                subject: &args.subject,
+                body_hash: &bh,
+                template_hash: &th,
+                attachments_hash: &ah,
+                attachments: &args.attachments,
+                gmail_message_id: &id,
+            },
+        ) {
+            tracing::warn!(error = %e, recipient = %recipient, "could not record send to history db");
+        }
     }
 
     Ok(SendOneResult {

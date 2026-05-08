@@ -12,6 +12,7 @@ import {
   rowRecord,
   resolveTokens,
   resolveTokensHtml,
+  splitRecipients,
 } from "../data";
 import { StepShell, Pill, primaryBtn, ghostBtn, linkBtn } from "../primitives";
 import { ArchDivider } from "./WindowChrome";
@@ -129,10 +130,14 @@ export function StepSend({
 
   const norm = (e: string) => (e || "").trim().toLowerCase();
   const firstIdxByEmail = React.useMemo(() => {
+    // Map each individual address (after splitting multi-recipient cells) to
+    // the earliest row that contains it.
     const map = new Map<string, number>();
     rowMetas.forEach((r, i) => {
-      const k = norm(r.record[emailColumn] ?? "");
-      if (k && !map.has(k)) map.set(k, i);
+      for (const addr of splitRecipients(r.record[emailColumn] ?? "")) {
+        const k = norm(addr);
+        if (k && !map.has(k)) map.set(k, i);
+      }
     });
     return map;
   }, [rowMetas, emailColumn]);
@@ -141,11 +146,15 @@ export function StepSend({
     (i: number): { label: string; firstIdx: number } | null => {
       const r = rowMetas[i];
       if (!r) return null;
-      const k = norm(r.record[emailColumn] ?? "");
-      if (!k) return null;
-      const first = firstIdxByEmail.get(k);
-      if (first === undefined || first === i) return null;
-      return { label: `same address as row ${first + 1}`, firstIdx: first };
+      for (const addr of splitRecipients(r.record[emailColumn] ?? "")) {
+        const k = norm(addr);
+        if (!k) continue;
+        const first = firstIdxByEmail.get(k);
+        if (first !== undefined && first !== i) {
+          return { label: `same address as row ${first + 1}`, firstIdx: first };
+        }
+      }
+      return null;
     },
     [rowMetas, firstIdxByEmail, emailColumn]
   );
@@ -266,7 +275,7 @@ export function StepSend({
       if (dismissedSendErrorRows.has(i)) continue;
       out.push({
         rowIndex: i,
-        recipient: rowMetas[i].record[emailColumn] ?? "",
+        recipient: splitRecipients(rowMetas[i].record[emailColumn] ?? "").join(", "),
         message: msg,
       });
     }
@@ -342,8 +351,8 @@ export function StepSend({
     const meta = rowMetas[i];
     if (!meta) return;
     const rec = meta.record;
-    const toEmail = rec[emailColumn] ?? "";
-    if (!toEmail.trim()) {
+    const recipients = splitRecipients(rec[emailColumn] ?? "");
+    if (recipients.length === 0) {
       setPerRowDupe(null);
       return;
     }
@@ -358,7 +367,7 @@ export function StepSend({
           rows: [
             {
               rowIndex: i,
-              recipient: toEmail,
+              recipients,
               bodyHtml,
               subjectTemplate: subject,
               bodyTemplate: template,
@@ -391,7 +400,8 @@ export function StepSend({
     const i = currentIdx;
     const meta = rowMetas[i];
     const record = meta.record;
-    const toEmail = record[emailColumn] ?? "";
+    const toEmails = splitRecipients(record[emailColumn] ?? "");
+    const recipientLabel = toEmails.join(", ");
     const toName = record[nameColumn] ?? null;
     const resolvedSubject = resolve(subject, record);
     const resolvedBodyHtml = resolveTokensHtml(template, record);
@@ -405,7 +415,7 @@ export function StepSend({
       setErrors((e) => ({ ...e, [i]: msg }));
       appendLog({
         rowIndex: i,
-        recipient: toEmail,
+        recipient: recipientLabel,
         subject: resolvedSubject,
         status: "skipped",
         timestamp: new Date().toISOString(),
@@ -417,10 +427,25 @@ export function StepSend({
       return;
     }
 
+    if (toEmails.length === 0) {
+      const msg = "no recipient address";
+      setStatus((s) => s.map((v, j) => (j === i ? "failed" : v)) as RowStatus[]);
+      setErrors((es) => ({ ...es, [i]: msg }));
+      appendLog({
+        rowIndex: i,
+        recipient: recipientLabel,
+        subject: resolvedSubject,
+        status: "failed",
+        timestamp: new Date().toISOString(),
+        error: msg,
+      });
+      return;
+    }
+
     setSending(true);
     try {
       const result = await ipc.sendOne({
-        toEmail,
+        toEmails,
         toName,
         cc,
         subject: resolvedSubject,
@@ -433,7 +458,7 @@ export function StepSend({
       setStatus(newStatus);
       appendLog({
         rowIndex: i,
-        recipient: toEmail,
+        recipient: recipientLabel,
         subject: resolvedSubject,
         status: "sent",
         timestamp: new Date().toISOString(),
@@ -452,7 +477,7 @@ export function StepSend({
       setErrors((es) => ({ ...es, [i]: msg }));
       appendLog({
         rowIndex: i,
-        recipient: toEmail,
+        recipient: recipientLabel,
         subject: resolvedSubject,
         status: "failed",
         timestamp: new Date().toISOString(),
@@ -482,7 +507,7 @@ export function StepSend({
     setStatus(newStatus);
     appendLog({
       rowIndex: i,
-      recipient: record[emailColumn] ?? "",
+      recipient: splitRecipients(record[emailColumn] ?? "").join(", "),
       subject: resolve(subject, record),
       status: "skipped",
       timestamp: new Date().toISOString(),
@@ -524,7 +549,7 @@ export function StepSend({
       if (!meta) continue;
       appendLog({
         rowIndex: j,
-        recipient: meta.record[emailColumn] ?? "",
+        recipient: splitRecipients(meta.record[emailColumn] ?? "").join(", "),
         subject: resolve(subject, meta.record),
         status: target,
         timestamp: ts,
@@ -599,13 +624,13 @@ export function StepSend({
       const rowsPayload = rowMetas
         .map((m, i) => {
           const rec = m.record;
-          const toEmail = rec[emailColumn] ?? "";
-          if (!toEmail.trim()) return null;
+          const recipients = splitRecipients(rec[emailColumn] ?? "");
+          if (recipients.length === 0) return null;
           const bodyHtml = resolveTokensHtml(template, rec);
           const attachments = buildAttachments(i);
           return {
             rowIndex: i,
-            recipient: toEmail,
+            recipients,
             bodyHtml,
             subjectTemplate: subject,
             bodyTemplate: template,
@@ -976,7 +1001,7 @@ export function StepSend({
               <div style={{ color: "var(--ink-soft)", fontFamily: "JetBrains Mono, monospace", fontSize: 10.5 }}>{i + 1}</div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ color: "var(--ink)", fontWeight: 500, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                  {rec[nameColumn] || rec[emailColumn] || `Row ${i + 1}`}
+                  {rec[nameColumn] || splitRecipients(rec[emailColumn] ?? "").join(", ") || `Row ${i + 1}`}
                   {dup && (
                     <span
                       style={{
@@ -1018,7 +1043,12 @@ export function StepSend({
                     </span>
                   )}
                 </div>
-                <div style={{ color: "var(--ink-soft)", fontSize: 11 }}>{rec[emailColumn] ?? ""}</div>
+                <div
+                  title={rec[emailColumn] ?? ""}
+                  style={{ color: "var(--ink-soft)", fontSize: 11 }}
+                >
+                  {splitRecipients(rec[emailColumn] ?? "").join(", ")}
+                </div>
               </div>
               <div style={{ color: "var(--ink-dim)", fontFamily: "Fraunces, serif", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {resolve(subject, rec)}
@@ -1541,7 +1571,30 @@ function ConfirmModal({
           <div style={{ display: "grid", gridTemplateColumns: "60px 1fr", rowGap: 10, fontSize: 13 }}>
             <div style={{ color: "var(--ink-soft)", fontSize: 11, textTransform: "uppercase", letterSpacing: 1, paddingTop: 2 }}>To</div>
             <div style={{ color: "var(--ink)" }}>
-              {record[nameColumn] || ""} <span style={{ color: "var(--ink-dim)" }}>&lt;{record[emailColumn] ?? ""}&gt;</span>
+              {(() => {
+                const addrs = splitRecipients(record[emailColumn] ?? "");
+                if (addrs.length === 0) {
+                  return (
+                    <span style={{ color: "var(--ink-dim)" }}>
+                      (no recipient)
+                    </span>
+                  );
+                }
+                const name = record[nameColumn] || "";
+                return (
+                  <>
+                    {name && <>{name} </>}
+                    <span style={{ color: "var(--ink-dim)" }}>
+                      {addrs.map((a, idx) => (
+                        <React.Fragment key={a}>
+                          {idx > 0 && ", "}
+                          &lt;{a}&gt;
+                        </React.Fragment>
+                      ))}
+                    </span>
+                  </>
+                );
+              })()}
             </div>
             <div style={{ color: "var(--ink-soft)", fontSize: 11, textTransform: "uppercase", letterSpacing: 1, paddingTop: 2 }}>From</div>
             <div style={{ color: "var(--ink)" }}>

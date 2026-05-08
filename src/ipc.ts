@@ -40,7 +40,11 @@ type RawResolvedAttachment = {
   note?: string | null;
 };
 
-type RawUnmatchedFile = { name: string; path: string };
+type RawUnmatchedFile = {
+  name: string;
+  path: string;
+  matched_sheet: string | null;
+};
 
 type RawResolveResult = {
   rows: RawResolvedAttachment[];
@@ -70,6 +74,8 @@ export const ipc = {
     rows: Record<string, string>[];
     caseInsensitive: boolean;
     fuzzy: boolean;
+    workbookPath?: string | null;
+    otherSheetNames?: string[];
   }): Promise<ResolveResult> => {
     const raw = await invoke<RawResolveResult>("resolve_attachments", {
       folder: args.folder,
@@ -77,6 +83,8 @@ export const ipc = {
       rows: args.rows,
       caseInsensitive: args.caseInsensitive,
       fuzzy: args.fuzzy,
+      workbookPath: args.workbookPath ?? null,
+      otherSheetNames: args.otherSheetNames ?? [],
     });
     return {
       rows: raw.rows.map((r) => ({
@@ -88,6 +96,7 @@ export const ipc = {
       unmatchedFiles: raw.unmatched_files.map((f) => ({
         name: f.name,
         path: f.path,
+        matchedSheet: f.matched_sheet,
       })),
     };
   },
@@ -97,7 +106,7 @@ export const ipc = {
   signOut: () => invoke<void>("sign_out"),
 
   sendOne: async (args: {
-    toEmail: string;
+    toEmails: string[];
     toName?: string | null;
     cc: string[];
     subject: string;
@@ -110,7 +119,7 @@ export const ipc = {
       "send_one",
       {
         args: {
-          to_email: args.toEmail,
+          to_emails: args.toEmails,
           to_name: args.toName ?? null,
           cc: args.cc,
           subject: args.subject,
@@ -127,7 +136,7 @@ export const ipc = {
   checkDuplicates: async (args: {
     rows: {
       rowIndex: number;
-      recipient: string;
+      recipients: string[];
       bodyHtml: string;
       subjectTemplate: string;
       bodyTemplate: string;
@@ -150,7 +159,7 @@ export const ipc = {
       args: {
         rows: args.rows.map((r) => ({
           row_index: r.rowIndex,
-          recipient: r.recipient,
+          recipients: r.recipients,
           body_html: r.bodyHtml,
           subject_template: r.subjectTemplate,
           body_template: r.bodyTemplate,

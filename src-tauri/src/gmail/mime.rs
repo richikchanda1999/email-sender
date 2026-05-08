@@ -101,7 +101,7 @@ pub fn html_to_plain(html: &str) -> String {
 pub fn build_mime(
     from_email: &str,
     from_name: Option<&str>,
-    to_email: &str,
+    to_emails: &[String],
     to_name: Option<&str>,
     cc: &[String],
     subject: &str,
@@ -109,9 +109,21 @@ pub fn build_mime(
     body_html: Option<&str>,
     attachments: &[PathBuf],
 ) -> Result<Vec<u8>> {
+    // Name binds to the first address only; remaining addresses go bare.
+    let to_addrs: Vec<(&str, &str)> = to_emails
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            (
+                if i == 0 { to_name.unwrap_or("") } else { "" },
+                e.as_str(),
+            )
+        })
+        .collect();
+
     let mut msg = MessageBuilder::new()
         .from((from_name.unwrap_or(""), from_email))
-        .to((to_name.unwrap_or(""), to_email))
+        .to(to_addrs)
         .subject(subject)
         .text_body(body_text);
 
